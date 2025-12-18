@@ -1,0 +1,55 @@
+**DÜZELTME + YENİ ÖZET (Tümüyle yeni inşa edilen sistem)**
+
+| # | Node / Katman | Görev | Not |
+|---|---------------|-------|------|
+| 1 | **GUI AI Agent** | Kullanıcıya tarayıcı tabanlı veya desktop GUI sunar; konu girilir, sonuçlar gösterilir. | Henüz mevcut değil, sıfırdan inşa edilecek. |
+| 2 | **Dinamik Tarayıcı Modülü** | Playwright/Selenium ile gerçek zamanlı site gezintisi; konu bazlı haber toplar. | Kırılgan ama esnek. |
+| 3 | **Statik Crawler Modülü** | Firecrawl / Crawl4AI ile whitelist siteleri periyodik tarar. | Stabil, RSS-first. |
+| 4 | **LLM Node** | Metin özetleme, entity extraction, sentiment. | Ayrı GPU server. |
+| 5 | **VLM Node** | Qwen3-VL (8B veya 30B-A3B) ile görsel + caption + OCR. | Ayrı GPU server. |
+| 6 | **Sınıflandırma Node** | Kategori, doğruluk skoru, bias flag. | CPU/ML modeli. |
+| 7 | **DB Node** | Relational + Vector DB (Postgres + Weaviate). | Kalıcı depolama. |
+| 8 | **Orchestrator Node** (opsiyonel ama şiddetle önerilir) | Workflow yönetimi, retry, monitoring. | Airflow / Temporal. |
+
+**Toplam: 7–8 bağımsız node, hepsi sıfırdan inşa edilecek.**
+
+---
+
+## KRİTİK TASARIM KARARLARI (hemen netleştirin)
+
+| Karar Alanı | Önerim (neden) |
+|-------------|----------------|
+| **Topoloji** | **Yıldız + Message Broker**. Orchestrator merkezde, diğer node’lar sadece ona bağlanır → debugging, scaling, version upgrade kolay. |
+| **İletişim Protokolü** | **gRPC + Protobuf** (binary, streaming, 3–5× düşük latency). HTTP/REST sadece GUI ↔ Orchestrator için. |
+| **Asenkron Kuyruk** | **Kafka** (exactly-once, schema registry) veya **RabbitMQ** (daha hafif). Her node publish/subscribe yapar. |
+| **Model Deployment** | **vLLM** (Qwen3-VL 8B için 1×A100, 30B-A3B için 2×A100 + tensor-parallel). Quantization: AWQ 4-bit. |
+| **Crawler Seçimi** | **Firecrawl** (API + webhook, robots.txt uyumlu). Playwright sadece “deep-dive” fallback. |
+| **Yasal Koruma** | Sadece **RSS + resmi API** + **robots.txt whitelist**. Tarayıcı modülüne rate-limit 1 req/5 sn + random user-agent. |
+| **Veri Schema** | Protobuf mesajları:<br>`NewsItem { url, title, raw_html, images[], timestamp, source_type }`<br>`ProcessedItem { summary, entities, sentiment, category, image_captions[], embeddings[] }` |
+| **Monitoring** | Prometheus exporters her node’da, Grafana dashboard, Loki log aggregation. |
+| **Deployment** | **Docker Compose** dev için, **K8s (kind veya EKS/GKE)** prod için. Helm chart’ler hazır. |
+
+---
+
+## ADIM ADIM MVP PLANI (4–6 hafta)
+
+| Hafta | Hedef |
+|------|-------|
+| 1 | Orchestrator + Kafka + gRPC skeleton (Python/FastAPI-gRPC). |
+| 2 | Firecrawl + Playwright modülleri → Kafka’ya `NewsItem` publish. |
+| 3 | vLLM Qwen3-VL 8B node (AWQ) → `ProcessedItem` döner. |
+| 4 | LLM node (Mistral-7B-Instruct) + Sınıflandırma (DistilBERT zero-shot). |
+| 5 | Weaviate + Postgres schema + ingestion pipeline. |
+| 6 | Streamlit GUI + Orchestrator API entegrasyonu, E2E test. |
+
+---
+
+## KRİTİK TEK HATA RİSKİ (DÜZELTME GEREKİR)
+
+> **“Model Context Protocol” gibi AI-specific protokolü uygulama katmanı için düşünmek.**  
+> MCP henüz olgun değil, production-grade değil. **gRPC + Protobuf** ile aynı işi 10× daha hızlı ve tipi güvenli yaparsınız. MCP’yi sadece araştırma prototipi için bırakın.
+
+---
+
+**Sonraki adım:**  
+İsterseniz **Protobuf schema taslağını + Orchestrator workflow diyagramını (Mermaid)** hemen burada çizeyim. Hangisini önce konuşalım?
