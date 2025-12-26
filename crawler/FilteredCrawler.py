@@ -255,58 +255,6 @@ class NewsCrawler:
         
         return None
 
-    def _extract_image_size(self, img_url):
-        """Extracts image size from URL path or returns 0 if not found.
-        
-        Args:
-            img_url (str): The image URL to analyze.
-        
-        Returns:
-            int: The size value found in URL, or 0 if not determinable.
-        """
-        # Pattern 1: /240/, /320/, /480/, /640/, /800/, /1024/ etc.
-        path_size_match = re.search(r'/(\d{2,4})/', img_url)
-        if path_size_match:
-            return int(path_size_match.group(1))
-        
-        # Pattern 2: image-300x200.jpg, image_640x480.png
-        dimension_match = re.search(r'[-_](\d+)x(\d+)\.(jpg|jpeg|png|webp)', img_url, re.IGNORECASE)
-        if dimension_match:
-            width = int(dimension_match.group(1))
-            return width
-        
-        # Pattern 3: Query parameters (?width=800, ?w=640)
-        query_match = re.search(r'[?&](width|w)=(\d+)', img_url)
-        if query_match:
-            return int(query_match.group(2))
-        
-        return 0
-
-    def _normalize_image_url(self, img_url):
-        """Normalizes image URL by removing size variations and query parameters.
-        
-        Examples:
-            /news/240/cpsprodpb/abc123.jpg -> /news/cpsprodpb/abc123.jpg
-            image.jpg?width=800&height=600 -> image.jpg
-        
-        Args:
-            img_url (str): The image URL to normalize.
-        
-        Returns:
-            str: Normalized URL for duplicate detection.
-        """
-        # Remove query parameters
-        base_url = img_url.split('?')[0]
-        
-        # Remove common size patterns in URL paths
-        normalized = re.sub(r'/\d{2,4}/', '/', base_url)
-        
-        # Remove size suffixes before extension
-        normalized = re.sub(r'[-_](thumb|small|medium|large|full|\d+x\d+)\.(jpg|jpeg|png|webp)', r'.\2', normalized, flags=re.IGNORECASE)
-        
-        return normalized
-
-    def _extract_media_content(self, article):
         """Extracts and filters media content (images and videos) from article.
         
         Args:
@@ -380,6 +328,160 @@ class NewsCrawler:
                 ][:3]
         
         except Exception as e:
+            print(f"      ⚠️ Medya çıkarma hatası: {e}")
+        
+        return media_content
+
+    def _calculate_image_importance(self, img_data):
+        """Calculates image importance based on display dimensions.
+        
+        Args:
+            img_data (dict): Image data from Crawl4AI containing width, height, score.
+        
+        Returns:
+            int: Importance score (width × height), or 0 if dimensions unavailable.
+        """
+        width = img_data.get('width', 0)
+        height = img_data.get('height', 0)
+        
+        # Convert string dimensions to int if needed
+        try:
+            if isinstance(width, str):
+                width = int(width)
+            if isinstance(height, str):
+                height = int(height)
+        except (ValueError, TypeError):
+            width, height = 0, 0
+        
+        # Calculate area (importance)
+        if width > 0 and height > 0:
+            return width * height
+        
+        # Fallback: Use Crawl4AI's scoring system
+        return img_data.get('score', 0) * 10000
+
+    def _normalize_image_url(self, img_url):
+        """Normalizes image URL by removing size variations and query parameters.
+        
+        Examples:
+            /news/240/cpsprodpb/abc123.jpg -> /news/cpsprodpb/abc123.jpg
+            image.jpg?width=800&height=600 -> image.jpg
+        
+        Args:
+            img_url (str): The image URL to normalize.
+        
+        Returns:
+            str: Normalized URL for duplicate detection.
+        """
+        # Remove query parameters
+        base_url = img_url.split('?')[0]
+        
+        # Remove common size patterns in URL paths
+        normalized = re.sub(r'/\d{2,4}/', '/', base_url)
+        
+        # Remove size suffixes before extension
+        normalized = re.sub(r'[-_](thumb|small|medium|large|full|\d+x\d+)\.(jpg|jpeg|png|webp)', r'.\2', normalized, flags=re.IGNORECASE)
+        
+        return normalized
+
+    def _extract_media_content(self, article):
+        """Extracts and filters media content (images and videos) from article.
+        
+        Args:
+            article: The Crawl4AI article result object.
+        
+        Returns:
+            dict: Filtered media content with main_image, content_images, and videos.
+        """
+        media_content = {
+            "main_image": None,
+            "content_images": [],
+            "videos": []
+        }
+        
+        try:
+            # Step 1: Extract main/hero image
+            media_content['main_image'] = self._extract_main_image(article.html)
+            
+            # Step 2: Extract content images from Crawl4AI media object
+            if hasattr(article, 'media') and article.media:
+                raw_images = article.media.get('images', [])
+                
+                # Dictionary to track largest displayed version of each image
+                # Key: normalized_url, Value: {'url': actual_url, 'importance': width*height, 'dimensions': 'WxH'}
+                image_versions = {}
+                
+                for img in raw_images:
+                    src = img.get('src', '')
+                    
+                    if not src or len(src) < 20:
+                        continue
+                    
+                    # Apply validation filters first
+                    if not self._is_valid_content_image(src, img):
+                        continue
+                    
+                    # Normalize URL for grouping
+                    normalized_url = self._normalize_image_url(src)
+                    
+                    # Calculate importance based on display dimensions
+                    importance = self._calculate_image_importance(img)
+                    
+                    # Keep only the largest displayed version of each image
+                    if normalized_url not in image_versions:
+                        image_versions[normalized_url] = {
+                            'url': src,
+                            'importance': importance,
+                            'width': img.get('width', 0),
+                            'height': img.get('height', 0)
+                        }
+                    else:
+                        # If current image is displayed larger, replace it
+                        if importance > image_versions[normalized_url]['importance']:
+                            image_versions[normalized_url] = {
+                                'url': src,
+                                'importance': importance,
+                                'width': img.get('width', 0),
+                                'height': img.get('height', 0)
+                            }
+                
+                # Sort by importance (largest first) and filter out main image
+                sorted_images = sorted(
+                    image_versions.items(),
+                    key=lambda x: x[1]['importance'],
+                    reverse=True
+                )
+                
+                for normalized_url, img_data in sorted_images:
+                    actual_url = img_data['url']
+                    
+                    # Skip main image
+                    if media_content['main_image']:
+                        normalized_main = self._normalize_image_url(media_content['main_image'])
+                        if normalized_url == normalized_main:
+                            continue
+                    
+                    media_content['content_images'].append(actual_url)
+                    
+                    # Debug: Show dimensions
+                    w, h = img_data['width'], img_data['height']
+                    importance = img_data['importance']
+                    print(f"         📐 Resim: {w}x{h} (Alan: {importance:,}px²)")
+                    
+                    # Limit reached
+                    if len(media_content['content_images']) >= Config['max_images']:
+                        break
+                
+                # Step 3: Extract videos
+                media_content['videos'] = [
+                    vid.get('src') for vid in article.media.get('videos', [])
+                    if vid.get('src')
+                ][:3]
+        
+        except Exception as e:
+
+
+
             print(f"      ⚠️ Medya çıkarma hatası: {e}")
         
         return media_content
