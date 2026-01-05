@@ -2,9 +2,22 @@ import asyncio
 import re
 import json
 import os
+import random  # Magic mod için eklendi
+import aiohttp
+from PIL import Image
+from io import BytesIO
 from datetime import datetime
 from urllib.parse import unquote
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+
+# Distributed mode imports
+try:
+    from crawler.config import CRAWLER_MODE
+    from crawler.services.grpc_client import GRPCClient, NodeStatus
+    DISTRIBUTED_AVAILABLE = True
+except ImportError:
+    DISTRIBUTED_AVAILABLE = False
+    CRAWLER_MODE = 'standalone'
 
 
 # ⚙️ Configurations
@@ -12,7 +25,7 @@ Config = {
     "search_query": "Turkey OR Türkiye OR Turkiye",
     "days_back": 3,
     "required_keywords": ["turkey", "türkiye", "turkiye", "ankara", "istanbul", "turkish"],
-    "max_images": 5  # Maximum images per article
+    "max_images": 3  # Maximum images per article
 }
 
 
@@ -48,67 +61,78 @@ SOURCES = [
         "name": "BBC",
         "domain": "bbc.com",
         "country": "united kingdom",
-        "block_paths": ["/topics/", "/avaz/", "/media/"]
+        "block_paths": ["/topics/", "/avaz/", "/media/"],
+        "allowed_paths": []
     },
     {
         "name": "CNN International",
         "domain": "edition.cnn.com",
         "country": "united states",
-        "block_paths": ["/videos/", "/gallery/", "/travel/", "/style/"]
+        "block_paths": ["/videos/", "/gallery/", "/travel/", "/style/"],
+        "allowed_paths": []
     },
     {
         "name": "Al Jazeera",
         "domain": "aljazeera.com",
         "country": "qatar",
-        "block_paths": ["/program/", "/author/", "/podcasts/", "/gallery/"]
+        "block_paths": ["/program/", "/author/", "/podcasts/", "/gallery/"],
+        "allowed_paths": []
     },
     {
         "name": "Ekathimerini",
         "domain": "ekathimerini.com",
         "country": "greece",
-        "block_paths": ["/opinion/", "/multimedia/"]
+        "block_paths": ["/opinion/", "/multimedia/"],
+        "allowed_paths": []
     },
     {
         "name": "Greek Reporter",
         "domain": "greekreporter.com",
         "country": "greece",
-        "block_paths": []
+        "block_paths": [],
+        "allowed_paths": []
     },
     {
         "name": "Greek City Times",
         "domain": "greekcitytimes.com",
         "country": "greece",
-        "block_paths": []
+        "block_paths": [],
+        "allowed_paths": []
     },
     {
         "name": "Times of Israel",
         "domain": "timesofisrael.com",
         "country": "israel",
-        "block_paths": ["/liveblog/"]
+        "block_paths": ["/liveblog/"],
+        "allowed_paths": []
     },
     {
         "name": "Haaretz",
         "domain": "haaretz.com",
         "country": "israel",
-        "block_paths": []
+        "block_paths": [],
+        "allowed_paths": []
     },
     {
         "name": "Jerusalem Post",
         "domain": "jpost.com",
         "country": "israel",
-        "block_paths": []
+        "block_paths": [],
+        "allowed_paths": []
     },
     {
         "name": "Israel National News",
         "domain": "israelnationalnews.com",
         "country": "israel",
-        "block_paths": []
+        "block_paths": [],
+        "allowed_paths": []
     },
     {
         "name": "Iran International",
         "domain": "iranintl.com",
         "country": "iran",
-        "block_paths": []
+        "block_paths": [],
+        "allowed_paths": []
     }
 ]
 
@@ -125,10 +149,31 @@ class NewsCrawler:
     def __init__(self):
         """Initialize the NewsCrawler with default configurations."""
         self.results = []
-        self.run_cfg = CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,
-        ) 
-        self.browser_cfg = BrowserConfig(headless=True) 
+        # Semaphore paralellik limitini belirler (Aynı anda 3 sekme)
+        self.semaphore = asyncio.Semaphore(3) 
+        
+        # gRPC client for distributed mode
+        self.grpc_client = None
+        if DISTRIBUTED_AVAILABLE and CRAWLER_MODE == 'distributed':
+            self.grpc_client = GRPCClient()
+        
+        # 🪄 DÜZELTME: 'user_agent_generator' satırı kaldırıldı.
+        self.browser_cfg = BrowserConfig(
+            headless=True,
+            verbose=False,
+            user_agent_mode="random",  # Bu satır rastgele kimlik için yeterlidir
+            viewport_width=1920,       
+            viewport_height=1080,
+            headers={
+                "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Ch-Ua-Platform": '"Windows"',
+                "Sec-Ch-Ua-Mobile": "?0",
+            }
+        )
+
+
 
     async def fetch_google_links(self, crawler, source):
         """Fetches links from Google for a specific site.
@@ -146,13 +191,18 @@ class NewsCrawler:
         google_url = (
             f"https://www.google.com/search?"
             f"q=site:{source['domain']}+({Config['search_query']})"
-            f"&tbs=qdr:d{Config['days_back']}&hl=tr"
+            f"&tbs=qdr:d{Config['days_back']}&hl=tr&num=20" # num=20 eklendi
         )
 
+        # 🪄 MAGIC UPDATE: Google bot korumasını aşmak için özel ayarlar
         run_cfg = CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,
-            wait_for="css:div#search",
-            delay_before_return_html=2.0
+            magic=True,              # Anti-bot tespiti aç
+            simulate_user=True,      # Mouse ve scroll simülasyonu
+            override_navigator=True, # Bot bayrağını gizle
+            wait_for="css:body",     # #search yerine body beklemek daha güvenli
+            js_code="window.scrollTo(0, document.body.scrollHeight);",
+            delay_before_return_html=random.uniform(4,5) # Rastgele bekleme
         )
 
         try:
@@ -165,14 +215,15 @@ class NewsCrawler:
             print(f"   ❌ {source['name']} için Google yanıt vermedi.")
             return []
 
-        # Find links with regex
+        # Find links with regex (Güncellenmiş Regex)
         domain_escaped = re.escape(source['domain'])
-        pattern = fr'href=["\'](https?://[^"\']*{domain_escaped}[^"\']*)["\']'
+        pattern = fr'href=["\'].*?(https?://[^"\']*{domain_escaped}[^"\']*)["\']'
         
         found_links = re.findall(pattern, result.html)
         
         clean_links = []
         all_blocked = GLOBAL_BLOCK_PATHS + source.get('block_paths', [])
+        source_allowed_paths = source.get('allowed_paths', [])
 
         for link in found_links:
             if "/url?q=" in link:
@@ -182,11 +233,15 @@ class NewsCrawler:
 
             if "google.com" not in link and "webcache" not in link:
                 is_blocked = any(blocked in link for blocked in all_blocked)
-                if not is_blocked:
+                if not is_blocked or any(allowed in link for allowed in source_allowed_paths):
                     clean_links.append(link)
 
         unique_links = list(set(clean_links))
         print(f"   🔎 {len(unique_links)} adet aday link bulundu.")
+        
+        # 🪄 MAGIC UPDATE: Google araması sonrası kısa bekleme
+        await asyncio.sleep(random.uniform(1.5, 2.0))
+        
         return unique_links
 
     def _is_valid_content_image(self, img_url, img_data=None):
@@ -233,6 +288,26 @@ class NewsCrawler:
         
         return True
 
+    async def _get_remote_image_size(self, session, url):
+        """Fetches image size using a shared session.
+        
+        Args:
+            session (aiohttp.ClientSession): The session to use for fetching.
+            url (str): The URL of the image.
+        
+        Returns:
+            tuple: (width, height)
+        """
+        try:
+            async with session.get(url, timeout=5) as response:
+                if response.status != 200:
+                    return 0, 0
+                data = await response.read()
+                img = Image.open(BytesIO(data))
+                return img.width, img.height
+        except Exception:
+            return 0, 0
+
     def _extract_main_image(self, html):
         """Extracts the main/hero image from Open Graph meta tags.
         
@@ -254,83 +329,6 @@ class NewsCrawler:
                 return match.group(1)
         
         return None
-
-        """Extracts and filters media content (images and videos) from article.
-        
-        Args:
-            article: The Crawl4AI article result object.
-        
-        Returns:
-            dict: Filtered media content with main_image, content_images, and videos.
-        """
-        media_content = {
-            "main_image": None,
-            "content_images": [],
-            "videos": []
-        }
-        
-        try:
-            # Step 1: Extract main/hero image
-            media_content['main_image'] = self._extract_main_image(article.html)
-            
-            # Step 2: Extract content images from Crawl4AI media object
-            if hasattr(article, 'media') and article.media:
-                raw_images = article.media.get('images', [])
-                
-                # Dictionary to track best version of each image
-                # Key: normalized_url, Value: {'url': actual_url, 'size': size_value}
-                image_versions = {}
-                
-                for img in raw_images:
-                    src = img.get('src', '')
-                    
-                    if not src or len(src) < 20:
-                        continue
-                    
-                    # Apply validation filters first
-                    if not self._is_valid_content_image(src, img):
-                        continue
-                    
-                    # Normalize URL for grouping
-                    normalized_url = self._normalize_image_url(src)
-                    
-                    # Extract size from URL
-                    size = self._extract_image_size(src)
-                    
-                    # Keep only the largest version of each image
-                    if normalized_url not in image_versions:
-                        image_versions[normalized_url] = {'url': src, 'size': size}
-                    else:
-                        # If current image is larger, replace it
-                        if size > image_versions[normalized_url]['size']:
-                            image_versions[normalized_url] = {'url': src, 'size': size}
-                
-                # Filter out main image and convert to list
-                for normalized_url, img_data in image_versions.items():
-                    actual_url = img_data['url']
-                    
-                    # Skip main image
-                    if media_content['main_image']:
-                        normalized_main = self._normalize_image_url(media_content['main_image'])
-                        if normalized_url == normalized_main:
-                            continue
-                    
-                    media_content['content_images'].append(actual_url)
-                    
-                    # Limit reached
-                    if len(media_content['content_images']) >= Config['max_images']:
-                        break
-                
-                # Step 3: Extract videos
-                media_content['videos'] = [
-                    vid.get('src') for vid in article.media.get('videos', [])
-                    if vid.get('src')
-                ][:3]
-        
-        except Exception as e:
-            print(f"      ⚠️ Medya çıkarma hatası: {e}")
-        
-        return media_content
 
     def _calculate_image_importance(self, img_data):
         """Calculates image importance based on display dimensions.
@@ -384,11 +382,12 @@ class NewsCrawler:
         
         return normalized
 
-    def _extract_media_content(self, article):
+    async def _extract_media_content(self, article, session):
         """Extracts and filters media content (images and videos) from article.
         
         Args:
             article: The Crawl4AI article result object.
+            session: Shared aiohttp session for size check.
         
         Returns:
             dict: Filtered media content with main_image, content_images, and videos.
@@ -408,7 +407,6 @@ class NewsCrawler:
                 raw_images = article.media.get('images', [])
                 
                 # Dictionary to track largest displayed version of each image
-                # Key: normalized_url, Value: {'url': actual_url, 'importance': width*height, 'dimensions': 'WxH'}
                 image_versions = {}
                 
                 for img in raw_images:
@@ -424,16 +422,41 @@ class NewsCrawler:
                     # Normalize URL for grouping
                     normalized_url = self._normalize_image_url(src)
                     
-                    # Calculate importance based on display dimensions
-                    importance = self._calculate_image_importance(img)
+                    # --- GÜNCELLENEN KISIM BAŞLANGIÇ ---
+                    # Boyutları al ve kontrol et
+                    w = img.get('width')
+                    h = img.get('height')
+                    
+                    # Eğer boyut bilgisi yoksa veya None ise, shared session kullanarak öğren
+                    if w is None or h is None:
+                        w, h = await self._get_remote_image_size(session, src)
+                    else:
+                        # String gelirse int'e çevir, hata varsa 0 yap
+                        try:
+                            w, h = int(w), int(h)
+                        except (ValueError, TypeError):
+                            w, h = 0, 0
+                    
+                    # Önemi hesapla (Alan = Genişlik x Yükseklik)
+                    importance = w * h
+                    
+                    # Çok küçük resimleri (örn: 50x50 altı) önem hesaplasak bile filtreleyelim
+                    if importance < 2500: 
+                        # Eğer boyut 0 geldiyse (bulunamadıysa) crawl4ai skoruna şans verelim
+                        score = img.get('score', 0)
+                        if score > 5: # Skor yüksekse yine de al
+                            importance = score * 1000
+                        else:
+                            continue
+                    # --- GÜNCELLENEN KISIM BİTİŞ ---
                     
                     # Keep only the largest displayed version of each image
                     if normalized_url not in image_versions:
                         image_versions[normalized_url] = {
                             'url': src,
                             'importance': importance,
-                            'width': img.get('width', 0),
-                            'height': img.get('height', 0)
+                            'width': w,
+                            'height': h
                         }
                     else:
                         # If current image is displayed larger, replace it
@@ -441,8 +464,8 @@ class NewsCrawler:
                             image_versions[normalized_url] = {
                                 'url': src,
                                 'importance': importance,
-                                'width': img.get('width', 0),
-                                'height': img.get('height', 0)
+                                'width': w,
+                                'height': h
                             }
                 
                 # Sort by importance (largest first) and filter out main image
@@ -466,7 +489,7 @@ class NewsCrawler:
                     # Debug: Show dimensions
                     w, h = img_data['width'], img_data['height']
                     importance = img_data['importance']
-                    print(f"         📐 Resim: {w}x{h} (Alan: {importance:,}px²)")
+                    # print(f"        📐 Resim: {w}x{h} (Alan: {importance:,}px²)")
                     
                     # Limit reached
                     if len(media_content['content_images']) >= Config['max_images']:
@@ -479,118 +502,161 @@ class NewsCrawler:
                 ][:3]
         
         except Exception as e:
-
-
-
             print(f"      ⚠️ Medya çıkarma hatası: {e}")
         
         return media_content
 
-    async def verify_and_extract(self, crawler, url, source_name):
+    async def verify_and_extract(self, crawler, url, source_name, session):
         """Opens the link, downloads the content, extracts the media and verifies it.
+        Uses semaphore for concurrency control and jitter for safety.
         
         Args:
-            crawler (AsyncWebCrawler): The crawler instance.
-            url (str): The URL to open.
-            source_name (str): The name of the source.
-        
-        Returns:
-            dict: The extracted content.
+            crawler: Crawler instance.
+            url: Target URL.
+            source_name: Name of source.
+            session: Shared aiohttp session.
         """
         
-        # Pre-validation: Skip obvious non-article URLs
-        if any(url.lower().endswith(ext) for ext in [".pdf", ".doc", ".docx", ".zip", ".xls"]):
-            return None
+        # 🛡️ GÜVENLİK: Semaphore ile eşzamanlı işlemi sınırla
+        async with self.semaphore:
+            
+            # 🛡️ JITTER: Tüm sekmeler aynı anda açılmasın diye rastgele bekleme
+            await asyncio.sleep(random.uniform(0.1, 1.2))
 
-        if url.count('/') < 4:
-            return None
-        
-        print(f"   📄 İndiriliyor: {url}")
-        
-        run_cfg = CrawlerRunConfig(
-            cache_mode=CacheMode.ENABLED,
-            exclude_external_links=True,
-            excluded_tags=['nav', 'header', 'footer', 'aside', 'script', 'style', 'form', 'iframe'],
-            remove_overlay_elements=True,
-            js_code="window.scrollTo(0, document.body.scrollHeight);",
-            delay_before_return_html=2.5,
-            wait_for="css:body",
-            page_timeout=60000
-        )
+            # Pre-validation: Skip obvious non-article URLs
+            if any(url.lower().endswith(ext) for ext in [".pdf", ".doc", ".docx", ".zip", ".xls"]):
+                return None
 
-        try:
-            article = await crawler.arun(url=url, config=run_cfg)
-        except Exception as e:
-            print(f"      ⚠️ Timeout/Hata: {str(e)[:50]}")
-            return None
+            # 🪄 MAGIC UPDATE: URL kontrolünü biraz gevşettik (3 slash yeterli olabilir)
+            if url.count('/') < 3:
+                return None
+            
+            print(f"   📄 İndiriliyor: {url}")
+            
+            # 🪄 MAGIC UPDATE: İçerik çekme için magic ayarlar
+            run_cfg = CrawlerRunConfig(
+                cache_mode=CacheMode.ENABLED,
+                magic=True,              # İçeriği okurken de insan gibi davran
+                exclude_external_links=True,
+                excluded_tags=['nav', 'header', 'footer', 'aside', 'script', 'style', 'form', 'iframe'],
+                remove_overlay_elements=True, # Popup temizle
+                js_code="window.scrollTo(0, document.body.scrollHeight);",
+                delay_before_return_html=1.0, # Paralel olunca süreyi azıcık kısalttık
+                wait_for="css:body",
+                page_timeout=60000
+            )
 
-        if not article.success:
-            return None
-
-        # Extract media content
-        media_content = self._extract_media_content(article)
-        
-        # Extract text content with fallback strategy
-        clean_text = ""
-        
-        try:
-            if hasattr(article, 'markdown') and hasattr(article.markdown, 'fit_markdown'):
-                clean_text = article.markdown.fit_markdown or ""
-        except:
-            pass
-
-        if len(clean_text) < 200:
             try:
-                clean_text = str(article.markdown) if hasattr(article, 'markdown') else ""
+                article = await crawler.arun(url=url, config=run_cfg)
+            except Exception as e:
+                print(f"      ⚠️ Timeout/Hata: {str(e)[:50]}")
+                return None
+
+            if not article.success:
+                return None
+
+            # Extract media content (Passing the shared session)
+            media_content = await self._extract_media_content(article, session)
+            
+            # Extract text content with fallback strategy
+            clean_text = ""
+            
+            try:
+                if hasattr(article, 'markdown') and hasattr(article.markdown, 'fit_markdown'):
+                    clean_text = article.markdown.fit_markdown or ""
             except:
                 pass
-        
-        if len(clean_text) < 200:
-            clean_text = re.sub(r'<[^>]+>', ' ', article.html)
-            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
 
-        # Content validation
-        if len(clean_text) < 200:
-            return None
-
-        # Keyword matching
-        clean_text_lower = clean_text.lower()
-        match = next((kw for kw in Config['required_keywords'] if kw in clean_text_lower), None)
-
-        if match:
-            img_count = len(media_content['content_images'])
-            vid_count = len(media_content['videos'])
+            if len(clean_text) < 200:
+                try:
+                    clean_text = str(article.markdown) if hasattr(article, 'markdown') else ""
+                except:
+                    pass
             
-            print(f"      ✅ ONAYLANDI ('{match}') | 📸 {img_count} Resim | 🎥 {vid_count} Video")
-            
-            return {
-                "source": source_name,
-                "country": next((s['country'] for s in SOURCES if s['name'] == source_name), "Unknown"),
-                "url": url,
-                "keyword_found": match,
-                "scraped_at": datetime.now().isoformat(),
-                "content": clean_text[:5000],
-                "media": media_content 
-            }
-        else:
-            print(f"      ❌ İLGİSİZ")
-            return None
+            if len(clean_text) < 200:
+                clean_text = re.sub(r'<[^>]+>', ' ', article.html)
+                clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+
+            # Content validation
+            if len(clean_text) < 200:
+                return None
+
+            # Keyword matching
+            clean_text_lower = clean_text.lower()
+            match = next((kw for kw in Config['required_keywords'] if kw in clean_text_lower), None)
+
+            if match:
+                img_count = len(media_content['content_images'])
+                vid_count = len(media_content['videos'])
+                
+                print(f"      ✅ ONAYLANDI ('{match}') | 📸 {img_count} Resim | 🎥 {vid_count} Video")
+                
+                return {
+                    "source": source_name,
+                    "country": next((s['country'] for s in SOURCES if s['name'] == source_name), "Unknown"),
+                    "url": url,
+                    "keyword_found": match,
+                    "scraped_at": datetime.now().isoformat(),
+                    "content": clean_text[:5000],
+                    "media": media_content 
+                }
+            else:
+                # print(f"      ❌ İLGİSİZ")
+                return None
 
     async def run(self):
         """Main execution method that orchestrates the crawling process."""
-        print(f"🚀 ÇOKLU TARAMA BAŞLATILIYOR ({len(SOURCES)} Site)...")
+        print(f"🚀 ÇOKLU TARAMA BAŞLATILIYOR ({len(SOURCES)} Site) [OPTIMIZED MODE]...")
         
-        async with AsyncWebCrawler(config=self.browser_cfg) as crawler:
-            for source in SOURCES:
-                links = await self.fetch_google_links(crawler, source)
-                
-                for link in links:
-                    data = await self.verify_and_extract(crawler, link, source['name'])
-                    if data:
-                        self.results.append(data)
-                
-                await asyncio.sleep(2)
+        # Connect to Orchestrator if in distributed mode
+        if self.grpc_client:
+            if self.grpc_client.connect():
+                self.grpc_client.register()
+                self.grpc_client.set_status(NodeStatus.BUSY)
+                print("[Crawler] Running in DISTRIBUTED mode - sending to Orchestrator")
+            else:
+                print("[Crawler] Warning: Could not connect to Orchestrator, falling back to standalone")
+        else:
+            print("[Crawler] Running in STANDALONE mode - saving to file")
+        
+        # 🚀 OPTIMIZATION: Tek bir shared session oluşturuyoruz
+        async with aiohttp.ClientSession() as session:
+            async with AsyncWebCrawler(config=self.browser_cfg) as crawler:
+                for source in SOURCES:
+                    # 1. Linkleri topla (Burası sıralı kalmak zorunda - Google ban yememek için)
+                    links = await self.fetch_google_links(crawler, source)
+                    
+                    if not links:
+                        continue
 
+                    # 2. Linkleri PARALEL işle (Semaphore ile sınırlandırılmış şekilde)
+                    tasks = []
+                    for link in links:
+                        task = self.verify_and_extract(crawler, link, source['name'], session)
+                        tasks.append(task)
+                    
+                    if tasks:
+                        print(f"   ⚡ {len(tasks)} haber paralel olarak işleniyor...")
+                        # Tüm görevleri başlat ve sonuçları bekle 
+                        results = await asyncio.gather(*tasks)
+                        
+                        # None dönenleri filtrele
+                        valid_results = [r for r in results if r]
+                        
+                        # Send to Orchestrator or save locally
+                        for news_item in valid_results:
+                            if self.grpc_client and self.grpc_client.is_connected:
+                                self.grpc_client.send_crawl_result(news_item)
+                            self.results.append(news_item)
+                    
+                    # 🪄 MAGIC UPDATE: Siteler arası rastgele bekleme
+                    await asyncio.sleep(random.uniform(3, 6))
+        
+        # Cleanup
+        if self.grpc_client:
+            self.grpc_client.set_status(NodeStatus.IDLE)
+            self.grpc_client.stop()
+        
         self.save_results()
 
     def save_results(self):

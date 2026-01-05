@@ -1,0 +1,165 @@
+syntax = "proto3";
+
+package bitirme;
+
+// ============================================================================
+// COMMON MESSAGES
+// ============================================================================
+
+// Node registration request - sent by any node type on first connect
+message RegisterRequest {
+  string node_type = 1;  // "crawler", "vlm", "llm", "db"
+}
+
+// Node registration response - Orchestrator assigns ID
+message RegisterResponse {
+  bool success = 1;
+  string node_id = 2;           // e.g., "crawler_a3f2b8c9"
+  string message = 3;           // Error message if failed
+}
+
+// Heartbeat - nodes report their status periodically
+message HeartbeatRequest {
+  string node_id = 1;
+  NodeStatus status = 2;
+}
+
+message HeartbeatResponse {
+  bool acknowledged = 1;
+}
+
+// Node status enum
+enum NodeStatus {
+  IDLE = 0;
+  BUSY = 1;
+  ERROR = 2;
+}
+
+// Generic task result status
+enum TaskStatus {
+  SUCCESS = 0;
+  FAILED = 1;
+  TIMEOUT = 2;
+}
+
+// ============================================================================
+// CRAWLER MESSAGES
+// ============================================================================
+
+message CrawlTaskRequest {
+  string task_id = 1;
+  repeated string urls = 2;     // URLs to crawl
+}
+
+message CrawlTaskResponse {
+  string task_id = 1;
+  TaskStatus status = 2;
+  string json_data = 3;         // Crawled data as JSON string
+  string error_message = 4;
+}
+
+// ============================================================================
+// DATABASE MESSAGES
+// ============================================================================
+
+message StoreDataRequest {
+  string task_id = 1;
+  string json_data = 2;         // Data to store
+  bool vectorize = 3;           // Whether to also add to vector DB
+}
+
+message StoreDataResponse {
+  string task_id = 1;
+  TaskStatus status = 2;
+  string news_id = 3;           // Unique ID assigned to the news item
+  bool is_duplicate = 4;        // True if data was duplicate and skipped
+  string error_message = 5;
+}
+
+message GetQueueRequest {
+  int32 limit = 1;              // Max items to retrieve
+}
+
+message GetQueueResponse {
+  TaskStatus status = 1;
+  repeated string json_items = 2;  // Unprocessed items from queue
+}
+
+// ============================================================================
+// VLM (Vision Language Model) MESSAGES
+// ============================================================================
+
+message AnalyzeImagesRequest {
+  string task_id = 1;
+  string json_data = 2;         // Contains image URLs/paths and context
+}
+
+message AnalyzeImagesResponse {
+  string task_id = 1;
+  TaskStatus status = 2;
+  string analysis_json = 3;     // Image analysis results
+  string error_message = 4;
+}
+
+// ============================================================================
+// LLM (Language Model) MESSAGES
+// ============================================================================
+
+message AnalyzeTextRequest {
+  string task_id = 1;
+  string text_json = 2;         // Original text data
+  string image_analysis_json = 3;  // VLM results to incorporate
+}
+
+message AnalyzeTextResponse {
+  string task_id = 1;
+  TaskStatus status = 2;
+  string summary = 3;           // Short summary
+  int32 sentiment = 4;          // -1 (negative), 0 (neutral), 1 (positive)
+  string full_analysis_json = 5;
+  string error_message = 6;
+}
+
+// ============================================================================
+// ORCHESTRATOR SERVICE DEFINITION
+// ============================================================================
+
+service OrchestratorService {
+  // --- Common for all nodes ---
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // --- Crawler reports results ---
+  rpc ReportCrawlResult(CrawlTaskResponse) returns (HeartbeatResponse);
+  
+  // --- DB reports results ---
+  rpc ReportStoreResult(StoreDataResponse) returns (HeartbeatResponse);
+  rpc ReportQueueData(GetQueueResponse) returns (HeartbeatResponse);
+  
+  // --- VLM reports results ---
+  rpc ReportImageAnalysis(AnalyzeImagesResponse) returns (HeartbeatResponse);
+  
+  // --- LLM reports results ---
+  rpc ReportTextAnalysis(AnalyzeTextResponse) returns (HeartbeatResponse);
+}
+
+// ============================================================================
+// WORKER SERVICES (Called by Orchestrator)
+// ============================================================================
+
+service CrawlerService {
+  rpc ExecuteCrawl(CrawlTaskRequest) returns (CrawlTaskResponse);
+}
+
+service DatabaseService {
+  rpc StoreData(StoreDataRequest) returns (StoreDataResponse);
+  rpc GetQueue(GetQueueRequest) returns (GetQueueResponse);
+}
+
+service VLMService {
+  rpc AnalyzeImages(AnalyzeImagesRequest) returns (AnalyzeImagesResponse);
+}
+
+service LLMService {
+  rpc AnalyzeText(AnalyzeTextRequest) returns (AnalyzeTextResponse);
+}

@@ -1,0 +1,172 @@
+"""
+DB Node Main Entry Point
+Manages PostgreSQL and MinIO connections, registers with Orchestrator.
+"""
+import asyncio
+import signal
+import sys
+import json
+from pathlib import Path
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from db.config import HEARTBEAT_INTERVAL
+from db.services.grpc_client import GRPCClient, NodeStatus
+from db.services.postgres_manager import PostgresManager
+from db.services.minio_manager import MinIOManager
+
+
+class DBNode:
+    """
+    Main DB Node class.
+    Manages database and storage connections.
+    """
+    
+    def __init__(self):
+        self.grpc_client = GRPCClient()
+        self.postgres = PostgresManager()
+        self.minio = MinIOManager()
+        self._running = False
+    
+    async def initialize(self) -> bool:
+        """Initialize all connections."""
+        print("=" * 50)
+        print("DB NODE STARTING")
+        print("=" * 50)
+        
+        # Connect to Orchestrator
+        if not self.grpc_client.connect():
+            print("[DB Node] Warning: Could not connect to Orchestrator")
+        else:
+            if not self.grpc_client.register():
+                print("[DB Node] Warning: Could not register with Orchestrator")
+        
+        # Connect to PostgreSQL
+        postgres_ok = await self.postgres.connect()
+        if not postgres_ok:
+            print("[DB Node] Warning: PostgreSQL not available")
+        
+        # Connect to MinIO
+        minio_ok = self.minio.connect()
+        if not minio_ok:
+            print("[DB Node] Warning: MinIO not available")
+        
+        print("=" * 50)
+        print(f"[DB Node] Node ID: {self.grpc_client.node_id or 'Not registered'}")
+        print(f"[DB Node] PostgreSQL: {'✓' if postgres_ok else '✗'}")
+        print(f"[DB Node] MinIO: {'✓' if minio_ok else '✗'}")
+        print("=" * 50)
+        
+        return True
+    
+    async def process_crawl_data(self, json_data: str) -> tuple[str, bool]:
+        """
+        Process incoming crawl data.
+        
+        1. Parse JSON
+        2. Download images to MinIO
+        3. Store in PostgreSQL
+        
+        Returns:
+            (news_id, is_duplicate)
+        """
+        self.grpc_client.set_status(NodeStatus.BUSY)
+        
+        try:
+            data = json.loads(json_data)
+            
+            # Generate news ID
+            news_id = self.postgres.generate_news_id(data['url'])
+            
+            # Download and store images
+            if 'media' in data and data['media']:
+                updated_media = await self.minio.process_news_images(
+                    news_id, 
+                    data['media']
+                )
+                data['media'] = updated_media
+            
+            # Store in PostgreSQL
+            news_id, is_duplicate = await self.postgres.insert_news(data)
+            
+            return news_id, is_duplicate
+            
+        except Exception as e:
+            print(f"[DB Node] Process error: {e}")
+            raise
+        finally:
+            self.grpc_client.set_status(NodeStatus.IDLE)
+    
+    async def get_queue_items(self, limit: int = 10) -> list:
+        """Get unprocessed items from database."""
+        return await self.postgres.get_unprocessed(limit)
+    
+    async def save_vlm_results(self, news_id: str, results: list):
+        """Save VLM analysis results."""
+        for result in results:
+            await self.postgres.save_vlm_analysis(news_id, result)
+        await self.postgres.mark_vlm_processed(news_id)
+    
+    async def save_llm_results(self, news_id: str, result: dict):
+        """Save LLM analysis results."""
+        await self.postgres.save_llm_analysis(news_id, result)
+        await self.postgres.mark_llm_processed(news_id)
+    
+    async def run(self):
+        """Run the DB node (async)."""
+        self._running = True
+        
+        # Start heartbeat in background
+        heartbeat_task = asyncio.create_task(
+            self.grpc_client.start_heartbeat_loop()
+        )
+        
+        try:
+            # Main loop - just keep running
+            while self._running:
+                await asyncio.sleep(1)
+                
+        except asyncio.CancelledError:
+            pass
+        finally:
+            heartbeat_task.cancel()
+            await self.shutdown()
+    
+    async def shutdown(self):
+        """Shutdown all connections."""
+        print("\n[DB Node] Shutting down...")
+        self._running = False
+        
+        self.grpc_client.stop()
+        await self.postgres.close()
+        
+        print("[DB Node] Shutdown complete")
+
+
+async def main():
+    """Async main entry point."""
+    node = DBNode()
+    
+    await node.initialize()
+    
+    # Handle Ctrl+C
+    loop = asyncio.get_event_loop()
+    
+    def signal_handler():
+        node._running = False
+    
+    try:
+        loop.add_signal_handler(signal.SIGINT, signal_handler)
+    except NotImplementedError:
+        # Windows doesn't support add_signal_handler
+        pass
+    
+    await node.run()
+
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n[DB Node] Interrupted by user")

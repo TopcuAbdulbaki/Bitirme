@@ -1,16 +1,51 @@
-Responsible for text analysis. Will use qwen3 for text analysis. Will use asyncio for async operations. Will use langchain for AI operations. Python 3.13.5
-There will be 2 version of this node. They will do exact same thing but one going to work with headless lm-studio as qwen3 vl-2b (this will be my prototype going to be used for testing on local) and the other one will be normal Huggingface model qwen3 8b (this will be my production version going to be used on server).
-Both will have same functionality. Only difference is that one will work on headless lm-studio that loaded on my local and the other one will work on transformers(this will be my production version going to be used on server).
+Responsible for text analysis and final sentiment classification. Python 3.13.5
 
-will get texts from crawler via orchestrator. will send analysis results to orchestrator.
+## Models
 
-Huggingface Model: https://huggingface.co/Qwen/Qwen3-8B
-lm-studio Model: qwen3-vl-2b-instruct (you have to direct me to activate downloaded model on lm-studio)
+| Environment | Model | Backend |
+|-------------|-------|---------|
+| Local/Prototype | qwen3-vl-2b-instruct | LM Studio (headless) |
+| Production | Qwen3-8B | Transformers |
 
+Huggingface: https://huggingface.co/Qwen/Qwen3-8B
+
+## Technology Stack
+- asyncio for async operations
+- LangChain for model interface and structured output
+- RabbitMQ for task queue (consumes llm_tasks, publishes llm_results)
+- gRPC for heartbeat to Orchestrator
 
 Node Name: "LLM"
-Node ID: 
+Node ID: (assigned by Orchestrator)
 
+## Responsibilities
 
-analyzes texts and images analysis results and send its own analysis results to orchestrator as json file. It gonna be used for final analysis. interprates alltogether and sends short summary and if its positive(1) or negative(-1) or neutral(0) to orchestrator with structural way
+1. **Consume tasks from llm_tasks queue** (RabbitMQ)
+2. **Receive text content + VLM analysis results**
+3. **Generate comprehensive analysis**:
+   - Summary of the article
+   - Sentiment: -1 (negative), 0 (neutral), 1 (positive)
+   - Keywords and entities
+4. **Publish results to llm_results queue**
 
+## Output Format
+
+```json
+{
+    "summary": "Short summary of the article...",
+    "sentiment": -1,
+    "sentiment_label": "negative",
+    "keywords": ["iran", "politics", "protest"],
+    "entities": {
+        "countries": ["Iran"],
+        "organizations": ["Security forces"],
+        "people": []
+    },
+    "category": "politics",
+    "relevance_to_topic": "medium"
+}
+```
+
+## See Also
+- `docs/rabbitmq_architecture.md` - Queue structure
+- `docs/json_schemas.md` - Full data format
