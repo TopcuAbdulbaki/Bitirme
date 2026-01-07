@@ -34,6 +34,9 @@ COPY proto/ ./proto/
 # Compile proto files DIRECTLY into the generated folder
 RUN python -m grpc_tools.protoc -Iproto --python_out=db/generated --grpc_python_out=db/generated orchestrator.proto
 
+# Fix import in generated file (Python 3 relative import issue)
+RUN sed -i 's/^import orchestrator_pb2/from . import orchestrator_pb2/' db/generated/orchestrator_pb2_grpc.py
+
 # Create non-root user (Disabled for Windows Build Speed if needed, but standard practice)
 # RUN useradd -m appuser && chown -R appuser /app
 # USER appuser

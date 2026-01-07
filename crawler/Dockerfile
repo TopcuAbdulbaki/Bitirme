@@ -40,6 +40,9 @@ COPY proto/ ./proto/
 # We use -Iproto to treat the proto folder as root, so it generates 'orchestrator_pb2.py' without 'proto/' prefix.
 RUN python -m grpc_tools.protoc -Iproto --python_out=crawler/generated --grpc_python_out=crawler/generated orchestrator.proto
 
+# Fix import in generated file (Python 3 relative import issue)
+RUN sed -i 's/^import orchestrator_pb2/from . import orchestrator_pb2/' crawler/generated/orchestrator_pb2_grpc.py
+
 # Create non-root user (Disabled for Windows Build Speed)
 # RUN useradd -m appuser && chown -R appuser /app
 # USER appuser

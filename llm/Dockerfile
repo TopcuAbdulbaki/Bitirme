@@ -33,6 +33,9 @@ COPY proto/ ./proto/
 # Compile proto files DIRECTLY into the generated folder
 RUN python -m grpc_tools.protoc -Iproto --python_out=llm/generated --grpc_python_out=llm/generated orchestrator.proto
 
+# Fix import in generated file (Python 3 relative import issue)
+RUN sed -i 's/^import orchestrator_pb2/from . import orchestrator_pb2/' llm/generated/orchestrator_pb2_grpc.py
+
 # Create non-root user
 RUN useradd -m appuser && chown -R appuser /app
 USER appuser
