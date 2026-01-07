@@ -11,7 +11,8 @@ GRPC_HOST = os.getenv('GRPC_HOST', '0.0.0.0')
 GRPC_PORT = int(os.getenv('GRPC_PORT', '50051'))
 
 # RabbitMQ Settings
-RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
+# RabbitMQ Settings (DISTRIBUTED: Must be set via env vars)
+RABBITMQ_HOST = os.getenv('RABBITMQ_HOST') # Default removed for distributed safety result: None
 RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
 RABBITMQ_USER = os.getenv('RABBITMQ_USER', 'guest')
 RABBITMQ_PASSWORD = os.getenv('RABBITMQ_PASSWORD', 'guest')

@@ -30,6 +30,8 @@ class NodeInfo:
     node_id: str
     node_type: NodeType
     status: NodeStatus = NodeStatus.IDLE
+    host: str = ""
+    port: int = 0
     registered_at: datetime = field(default_factory=datetime.now)
     last_heartbeat: datetime = field(default_factory=datetime.now)
     current_task_id: Optional[str] = None
@@ -71,7 +73,7 @@ class NodeRegistry:
         hash_part = hashlib.sha256(unique.encode()).hexdigest()[:8]
         return f"{node_type}_{hash_part}"
     
-    def register(self, node_type: str) -> tuple[bool, str, str]:
+    def register(self, node_type: str, host: str, port: int) -> tuple[bool, str, str]:
         """
         Register a new node.
         
@@ -91,7 +93,9 @@ class NodeRegistry:
             # Create node info
             node_info = NodeInfo(
                 node_id=node_id,
-                node_type=nt
+                node_type=nt,
+                host=host,
+                port=port
             )
             
             # Register

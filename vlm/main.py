@@ -43,7 +43,8 @@ class VLMNode:
         # Check model availability
         model_ok = await self.model_handler.is_available()
         if not model_ok and MODEL_MODE == 'lmstudio':
-            print("[VLM Node] Warning: LM Studio not available. Make sure it's running.")
+            # print("[VLM Node] Warning: LM Studio not available. Make sure it's running.")
+            pass
         
         print("=" * 50)
         print(f"[VLM Node] Node ID: {self.grpc_client.node_id or 'Not registered'}")

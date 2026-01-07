@@ -11,13 +11,16 @@ from urllib.parse import unquote
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
 # Distributed mode imports
-try:
-    from crawler.config import CRAWLER_MODE
-    from crawler.services.grpc_client import GRPCClient, NodeStatus
-    DISTRIBUTED_AVAILABLE = True
-except ImportError:
-    DISTRIBUTED_AVAILABLE = False
-    CRAWLER_MODE = 'standalone'
+# Distributed mode imports
+# Distributed mode imports
+# try:
+from crawler.config import CRAWLER_MODE, CRAWLER_DEMO_MODE, CRAWLER_DEMO_LIMIT
+from crawler.services.grpc_client import GRPCClient, NodeStatus
+from crawler.services.grpc_server import GRPCServer
+DISTRIBUTED_AVAILABLE = True
+# except ImportError:
+#     DISTRIBUTED_AVAILABLE = False
+#     CRAWLER_MODE = 'standalone'
 
 
 # ⚙️ Configurations
@@ -604,60 +607,100 @@ class NewsCrawler:
                 # print(f"      ❌ İLGİSİZ")
                 return None
 
-    async def run(self):
-        """Main execution method that orchestrates the crawling process."""
-        print(f"🚀 ÇOKLU TARAMA BAŞLATILIYOR ({len(SOURCES)} Site) [OPTIMIZED MODE]...")
-        
-        # Connect to Orchestrator if in distributed mode
-        if self.grpc_client:
-            if self.grpc_client.connect():
-                self.grpc_client.register()
-                self.grpc_client.set_status(NodeStatus.BUSY)
-                print("[Crawler] Running in DISTRIBUTED mode - sending to Orchestrator")
-            else:
-                print("[Crawler] Warning: Could not connect to Orchestrator, falling back to standalone")
-        else:
-            print("[Crawler] Running in STANDALONE mode - saving to file")
-        
-        # 🚀 OPTIMIZATION: Tek bir shared session oluşturuyoruz
+    async def execute_crawl_task(self, specific_urls=None):
+        """
+        Triggered by Orchestrator via gRPC (or runs directly in standalone).
+        Executes the crawling pipeline.
+        """
+        print(f"🚀 CRAWL TASK STARTED ({len(SOURCES)} Sources)...")
+        if CRAWLER_DEMO_MODE:
+             print(f"🧪 DEMO MODE ACTIVE: Will stop after {CRAWLER_DEMO_LIMIT} items.")
+             
+        # 🚀 OPTIMIZATION: Create shared session
         async with aiohttp.ClientSession() as session:
             async with AsyncWebCrawler(config=self.browser_cfg) as crawler:
+                
+                # If specific URLs provided, logic could be here to filter sources
+                # For now, we run the full source list
+                
                 for source in SOURCES:
-                    # 1. Linkleri topla (Burası sıralı kalmak zorunda - Google ban yememek için)
+                    # 1. Fetch Links
                     links = await self.fetch_google_links(crawler, source)
                     
                     if not links:
                         continue
 
-                    # 2. Linkleri PARALEL işle (Semaphore ile sınırlandırılmış şekilde)
+                    # 2. Process Links Parallel
                     tasks = []
                     for link in links:
                         task = self.verify_and_extract(crawler, link, source['name'], session)
                         tasks.append(task)
                     
                     if tasks:
-                        print(f"   ⚡ {len(tasks)} haber paralel olarak işleniyor...")
-                        # Tüm görevleri başlat ve sonuçları bekle 
+                        print(f"   ⚡ Processing {len(tasks)} items...")
                         results = await asyncio.gather(*tasks)
-                        
-                        # None dönenleri filtrele
                         valid_results = [r for r in results if r]
                         
-                        # Send to Orchestrator or save locally
                         for news_item in valid_results:
+                            # Send to Orchestrator
                             if self.grpc_client and self.grpc_client.is_connected:
                                 self.grpc_client.send_crawl_result(news_item)
+                            
                             self.results.append(news_item)
+                            
+                            # DEMO LIMIT CHECK
+                            if CRAWLER_DEMO_MODE and len(self.results) >= CRAWLER_DEMO_LIMIT:
+                                print(f"\n🛑 DEMO MODE LIMIT REACHED - Stopping...")
+                                return # Exit function
+
+                    if CRAWLER_DEMO_MODE and len(self.results) >= CRAWLER_DEMO_LIMIT:
+                        return
                     
-                    # 🪄 MAGIC UPDATE: Siteler arası rastgele bekleme
                     await asyncio.sleep(random.uniform(3, 6))
         
-        # Cleanup
-        if self.grpc_client:
-            self.grpc_client.set_status(NodeStatus.IDLE)
-            self.grpc_client.stop()
-        
         self.save_results()
+        print("✅ Crawl Task Complete")
+    async def run(self):
+        """Main execution method."""
+        print("🤖 CRAWLER NODE INITIALIZING...")
+        
+        # 1. Initialize Server (even if standalone, though mostly for distributed callbacks)
+        self.server = None
+        if DISTRIBUTED_AVAILABLE and CRAWLER_MODE == 'distributed':
+            self.server = GRPCServer(self)
+            await self.server.start()
+        
+        # 2. Connect Client & Register
+        if self.grpc_client:
+            if self.grpc_client.connect():
+                self.grpc_client.register()
+                self.grpc_client.set_status(NodeStatus.IDLE)
+                print("[Crawler] Connected & Registered. Waiting for tasks...")
+            else:
+                raise ConnectionError("Could not connect to Orchestrator in DISTRIBUTED mode.")
+        else:
+             # Standalone mode - just run once immediately
+             print("[Crawler] Standalone Mode - Running immediately.")
+             await self.execute_crawl_task()
+             return
+
+        # 3. Wait Loop (Keep process alive for callbacks)
+        try:
+            while True:
+                # Keep sending heartbeats via client background task or just sleep
+                # The client has start_heartbeat_loop() which we should use
+                if not getattr(self, '_heartbeat_task', None):
+                    self._heartbeat_task = asyncio.create_task(self.grpc_client.start_heartbeat_loop())
+                
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            print("[Crawler] Stopping...")
+        finally:
+            if self.server:
+                await self.server.stop()
+            if self.grpc_client:
+                self.grpc_client.stop()
+
 
     def save_results(self):
         """Saves the scraped results to a JSON file."""

@@ -9,6 +9,8 @@ package bitirme;
 // Node registration request - sent by any node type on first connect
 message RegisterRequest {
   string node_type = 1;  // "crawler", "vlm", "llm", "db"
+  string host = 2;       // Node's IP/Host for callbacks
+  int32 port = 3;        // Node's Port for callbacks
 }
 
 // Node registration response - Orchestrator assigns ID

@@ -32,7 +32,7 @@ class EmbeddingManager:
     # Embedding dimension for Qwen3-Embedding-0.6B
     EMBEDDING_DIM = 1024
     
-    def __init__(self, mode: str = 'local', api_base: str = 'http://localhost:1234'):
+    def __init__(self, mode: str = 'local', api_base: str = None):
         """
         Initialize embedding manager.
         
@@ -41,11 +41,13 @@ class EmbeddingManager:
             api_base: Base URL for API mode
         """
         self.mode = mode
-        self.api_base = api_base
+        # Use env var if not provided, fallback to common default but log it
+        import os
+        self.api_base = api_base or os.getenv('EMBEDDING_API_URL', 'http://lm-studio-node:1234')
         self._model = None
         self._loaded = False
         
-        print(f"[Embedding] Manager initialized (mode={mode})")
+        print(f"[Embedding] Manager initialized (mode={mode}, api_base={self.api_base})")
     
     def load_model(self, model_name: str = 'Qwen/Qwen3-Embedding-0.6B'):
         """

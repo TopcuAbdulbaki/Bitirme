@@ -33,7 +33,11 @@ class OrchestratorServicer(pb2_grpc.OrchestratorServiceServicer):
         """Handle node registration requests."""
         print(f"[gRPC] Register request from: {request.node_type}")
         
-        success, node_id, message = self.registry.register(request.node_type)
+        success, node_id, message = self.registry.register(
+            request.node_type,
+            request.host,
+            request.port
+        )
         
         return pb2.RegisterResponse(
             success=success,

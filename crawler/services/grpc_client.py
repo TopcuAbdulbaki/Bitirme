@@ -4,6 +4,7 @@ gRPC Client for Crawler Node
 import grpc
 import json
 import asyncio
+import socket
 from typing import Optional
 from enum import IntEnum
 
@@ -60,7 +61,18 @@ class GRPCClient:
         if not self._stub:
             return False
         try:
-            request = pb2.RegisterRequest(node_type="crawler")
+            # Get local IP
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+            
+            # Use configured port
+            from crawler.config import CRAWLER_GRPC_PORT
+            
+            request = pb2.RegisterRequest(
+                node_type="crawler",
+                host=local_ip,
+                port=CRAWLER_GRPC_PORT
+            )
             response = self._stub.Register(request)
             if response.success:
                 self._node_id = response.node_id

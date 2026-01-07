@@ -37,7 +37,8 @@ class LLMNode:
         
         model_ok = await self.model_handler.is_available()
         if not model_ok and MODEL_MODE == 'lmstudio':
-            print("[LLM Node] Warning: LM Studio not available.")
+            # print("[LLM Node] Warning: LM Studio not available.")
+            pass
         
         print("=" * 50)
         print(f"[LLM Node] Node ID: {self.grpc_client.node_id or 'Not registered'}")

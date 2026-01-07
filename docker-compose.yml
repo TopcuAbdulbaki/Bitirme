@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
+    container_name: orchestrator
+    image: orchestrator
+    ports:
+      - "50051:50051"
+    environment:
+      - GRPC_PORT=50051
+      - RABBITMQ_AVAILABLE=false
+    networks:
+      - bitirme-net
+
+  crawler:
+    build:
+      context: .
+      dockerfile: crawler/Dockerfile
+    container_name: crawler
+    image: crawler
+    depends_on:
+      - orchestrator
+    environment:
+      - ORCHESTRATOR_HOST=orchestrator
+      - ORCHESTRATOR_PORT=50051
+      - CRAWLER_GRPC_PORT=50052
+      - CRAWLER_DEMO_MODE=false
+    networks:
+      - bitirme-net
+
+  db:
+    build:
+      context: .
+      dockerfile: db/Dockerfile
+    container_name: db
+    image: db
+    depends_on:
+      - orchestrator
+    ports:
+      - "50053:50053"
+      # Expose Postgres/MinIO for local external tools if needed
+      # - "5432:5432"
+      # - "9000:9000"
+    environment:
+      - ORCHESTRATOR_HOST=orchestrator
+      - ORCHESTRATOR_PORT=50051
+      - POSTGRES_HOST=localhost # In-container postgres
+      - POSTGRES_PORT=5432
+      - MINIO_HOST=localhost # In-container minio
+      - MINIO_PORT=9000
+    networks:
+      - bitirme-net
+  # VLM and LLM are commented out by default due to size/GPU requirements
+  # Uncomment to build/run them locally (requires NVIDIA Container Toolkit)
+  # vlm:
+  #   build:
+  #     context: .
+  #     dockerfile: vlm/Dockerfile
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   environment:
+  #     - ORCHESTRATOR_HOST=orchestrator
+  #   networks:
+  #     - bitirme-net
+
+  # llm:
+  #   build:
+  #     context: .
+  #     dockerfile: llm/Dockerfile
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   environment:
+  #     - ORCHESTRATOR_HOST=orchestrator
+  #   networks:
+  #     - bitirme-net
+
+networks:
+  bitirme-net:
+    driver: bridge

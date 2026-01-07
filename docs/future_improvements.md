@@ -6,6 +6,16 @@ Ideas and enhancements for future development.
 
 ## 🔴 Priority (from 2209.md)
 
+### Database Storage Upgrade (URGENT)
+- Currently limited to 10GB for demo purposes.
+- Upgrade to 100GB persistent storage for production.
+- Implement volume expansion strategy for MinIO and Postgres.
+
+### Docker Compose Setup (URGENT)
+- Create `docker-compose.yml` for local orchestration of all 5 nodes.
+- Simplify local testing and development before pushing to Vast.ai.
+- Ensure network aliases (`orchestrator`, `db`, etc.) match environment variables.
+
 ### FastAPI User Interface
 Build a query interface prototype for searching and viewing analyzed news.
 - Search by keyword, date range, sentiment
@@ -95,3 +105,19 @@ Fine-tune Qwen3 models on Turkish news data for better accuracy.
 
 ### Model Switching
 Compare different model sizes (2B, 4B, 8B) and allow users to choose.
+
+---
+
+## Architecture & Deployment
+
+### Restore Local/Standalone Mode
+Currently, local fallback modes (Standalone Crawler, LM Studio) have been disabled to enforce a strict distributed architecture.
+- Re-implement "Developer Mode" flags in `config.py`.
+- allow running nodes individually without the Orchestrator for debugging.
+- Add CLI arguments (e.g., `--local`) to override environment variables easily.
+
+### Time or Event Triggering
+Replace the current startup-trigger mechanism with a more robust scheduling system.
+- **Time-based**: Use `APScheduler` or cron-jobs to run crawls at specific times (e.g., 08:00 AM daily).
+- **Event-based**: Trigger crawls via external API calls (e.g., a "Start Crawl" button on a React Frontend).
+- This allows the system to remain IDLE and conserve resources when not needed.

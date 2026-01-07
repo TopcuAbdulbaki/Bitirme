@@ -7,18 +7,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Orchestrator Connection
-ORCHESTRATOR_HOST = os.getenv('ORCHESTRATOR_HOST', 'localhost')
+# Orchestrator Connection (DISTRIBUTED: Must be set via env vars)
+ORCHESTRATOR_HOST = os.getenv('ORCHESTRATOR_HOST') # Default removed
 ORCHESTRATOR_PORT = int(os.getenv('ORCHESTRATOR_PORT', '50051'))
 
-# PostgreSQL Settings
-POSTGRES_HOST = os.getenv('POSTGRES_HOST', 'localhost')
+# PostgreSQL Settings (DISTRIBUTED: Must be set via env vars)
+POSTGRES_HOST = os.getenv('POSTGRES_HOST') # Default removed
 POSTGRES_PORT = int(os.getenv('POSTGRES_PORT', '5432'))
 POSTGRES_DB = os.getenv('POSTGRES_DB', 'news_db')
 POSTGRES_USER = os.getenv('POSTGRES_USER', 'news_user')
 POSTGRES_PASSWORD = os.getenv('POSTGRES_PASSWORD', 'news_password')
 
-# MinIO Settings
-MINIO_HOST = os.getenv('MINIO_HOST', 'localhost')
+# MinIO Settings (DISTRIBUTED: Must be set via env vars)
+MINIO_HOST = os.getenv('MINIO_HOST') # Default removed
 MINIO_PORT = int(os.getenv('MINIO_PORT', '9000'))
 MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'admin')
 MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'admin123')

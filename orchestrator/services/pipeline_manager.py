@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .node_registry import NodeRegistry, NodeType
+import grpc
+from orchestrator.generated import orchestrator_pb2 as pb2
+from orchestrator.generated import orchestrator_pb2_grpc as pb2_grpc
 
 
 class PipelineStage(Enum):
@@ -161,6 +164,50 @@ class PipelineManager:
             if t.stage not in (PipelineStage.COMPLETE, PipelineStage.FAILED)
         ]
     
+    async def trigger_crawl(self, urls: list[str] = None):
+        """
+        Trigger a crawl task on an available crawler node.
+        """
+        urls = urls or []
+        print(f"[Pipeline] Attempting to trigger crawl for {len(urls)} URLs...")
+        
+        # 1. Find idle crawler
+        node = self.registry.get_idle_node(NodeType.CRAWLER)
+        if not node:
+            print("[Pipeline] No idle crawler available.")
+            return False
+            
+        print(f"[Pipeline] Found idle crawler: {node.node_id} at {node.host}:{node.port}")
+        
+        # 2. Create gRPC channel to the worker
+        if not node.host or not node.port:
+            print(f"[Pipeline] Crawler {node.node_id} has missing connectivity info.")
+            return False
+            
+        try:
+            target = f"{node.host}:{node.port}"
+            async with grpc.aio.insecure_channel(target) as channel:
+                stub = pb2_grpc.CrawlerServiceStub(channel)
+                
+                # 3. Create Task
+                task_id = self.generate_task_id()
+                
+                # 4. Call ExecuteCrawl
+                request = pb2.CrawlTaskRequest(task_id=task_id, urls=urls)
+                response = await stub.ExecuteCrawl(request)
+                
+                if response.status == 0: # SUCCESS
+                    self.registry.set_node_busy(node.node_id, task_id)
+                    print(f"[Pipeline] Triggered crawl task {task_id} successfully.")
+                    return True
+                else:
+                    print(f"[Pipeline] Failed to trigger crawl: {response.error_message}")
+                    return False
+                    
+        except Exception as e:
+            print(f"[Pipeline] RPC Error triggering crawl: {e}")
+            return False
+
     def cleanup_completed(self, max_age_seconds: int = 3600):
         """Remove completed tasks older than max_age."""
         # TODO: Implement based on timestamps
