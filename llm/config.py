@@ -21,9 +21,9 @@ RABBITMQ_PASSWORD = os.getenv('RABBITMQ_PASSWORD', 'guest')
 QUEUE_LLM_TASKS = 'llm_tasks'
 QUEUE_LLM_RESULTS = 'llm_results'
 
-# LM Studio Settings (Local Development - Commented out for Dist)
-# LM_STUDIO_HOST = os.getenv('LM_STUDIO_HOST', 'http://localhost:1234')
-# LM_STUDIO_MODEL = os.getenv('LM_STUDIO_MODEL', 'qwen3-8b')
+# LM Studio Settings (Fallback - not used in production)
+LM_STUDIO_HOST = os.getenv('LM_STUDIO_HOST', 'http://localhost:1234')
+LM_STUDIO_MODEL = os.getenv('LM_STUDIO_MODEL', 'qwen3-8b')
 
 # Production Model (Transformers)
 PRODUCTION_MODEL = os.getenv('PRODUCTION_MODEL', 'Qwen/Qwen3-8B')
