@@ -61,17 +61,24 @@ class GRPCClient:
         if not self._stub:
             return False
         try:
-            # Get local IP
-            hostname = socket.gethostname()
-            local_ip = socket.gethostbyname(hostname)
+            # Use PUBLIC_HOST if set (for distributed mode), otherwise local IP
+            from crawler.config import CRAWLER_GRPC_PORT, PUBLIC_HOST, PUBLIC_PORT
             
-            # Use configured port
-            from crawler.config import CRAWLER_GRPC_PORT
+            if PUBLIC_HOST:
+                # Distributed mode: use public IP/port for callbacks
+                register_host = PUBLIC_HOST
+                register_port = PUBLIC_PORT
+                print(f"[gRPC] Registering with PUBLIC address: {register_host}:{register_port}")
+            else:
+                # Local mode: use internal IP
+                hostname = socket.gethostname()
+                register_host = socket.gethostbyname(hostname)
+                register_port = CRAWLER_GRPC_PORT
             
             request = pb2.RegisterRequest(
                 node_type="crawler",
-                host=local_ip,
-                port=CRAWLER_GRPC_PORT
+                host=register_host,
+                port=register_port
             )
             response = self._stub.Register(request)
             if response.success:
