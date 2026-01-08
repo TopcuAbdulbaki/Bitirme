@@ -28,3 +28,7 @@ MINIO_SECURE = os.getenv('MINIO_SECURE', 'false').lower() == 'true'
 
 # Heartbeat Settings
 HEARTBEAT_INTERVAL = int(os.getenv('HEARTBEAT_INTERVAL', '10'))
+
+# Public Host/Port for distributed mode (Orchestrator uses these to call back)
+PUBLIC_HOST = os.getenv('PUBLIC_HOST')  # e.g., "116.102.85.223"
+PUBLIC_PORT = int(os.getenv('PUBLIC_PORT', '50053'))  # DB default port
