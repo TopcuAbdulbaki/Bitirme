@@ -2,22 +2,36 @@
 # CRAWLER - Parameterized Deploy Script (POLL MODEL)
 # ============================================
 # Usage: .\2_crawler.ps1 -OrchHost "116.102.85.223" -OrchPort "63567"
-# 
-# NOTE: No more PUBLIC_HOST/PORT needed! Crawler uses poll model now.
+
+# Load environment variables from .env
+$envFile = Join-Path $PSScriptRoot ".env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        if ($_ -match '^([^#=]+)=(.*)$') {
+            [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), "Process")
+        }
+    }
+}
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$Token = "<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>",
-    
-    [Parameter(Mandatory=$true)]
-    [string]$OrchHost,
-    
-    [Parameter(Mandatory=$true)]
-    [string]$OrchPort,
+    [string]$Token = $env:GH_TOKEN,
     
     [Parameter(Mandatory=$false)]
-    [string]$DockerUser = "abdulbakitopcu"
+    [string]$OrchHost = $env:ORCH_HOST,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$OrchPort = $env:ORCH_PORT,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$DockerUser = $env:DOCKER_USER
 )
+
+# Set defaults if not from env
+if (-not $Token) { $Token = "<TOKEN>" }
+if (-not $DockerUser) { $DockerUser = "abdulbakitopcu" }
+if (-not $OrchHost) { Write-Host "ERROR: OrchHost required! Set ORCH_HOST in .env or pass -OrchHost" -ForegroundColor Red; exit 1 }
+if (-not $OrchPort) { $OrchPort = "50051" }
 
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "CRAWLER DEPLOYMENT (POLL MODEL)" -ForegroundColor Cyan

@@ -1,20 +1,30 @@
 # ============================================
 # DB - Parameterized Deploy Script
 # ============================================
-# Usage: .\3_db.ps1 -Token "ghp_xxx" -OrchHost "116.102.85.223" -OrchPort "63567"
+# Usage: .\3_db.ps1 -OrchHost "116.102.85.223" -OrchPort "63567"
+
+# Load environment variables from .env
+$envFile = Join-Path $PSScriptRoot ".env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        if ($_ -match '^([^#=]+)=(.*)$') {
+            [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), "Process")
+        }
+    }
+}
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$Token = "<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>",
-    
-    [Parameter(Mandatory=$true)]
-    [string]$OrchHost,
-    
-    [Parameter(Mandatory=$true)]
-    [string]$OrchPort,
+    [string]$Token = $env:GH_TOKEN,
     
     [Parameter(Mandatory=$false)]
-    [string]$DockerUser = "abdulbakitopcu",
+    [string]$OrchHost = $env:ORCH_HOST,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$OrchPort = $env:ORCH_PORT,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$DockerUser = $env:DOCKER_USER,
     
     [Parameter(Mandatory=$false)]
     [string]$PgUser = "bitirme",
@@ -31,6 +41,12 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$MinioPassword = "minioadmin123"
 )
+
+# Set defaults if not from env
+if (-not $Token) { $Token = "<TOKEN>" }
+if (-not $DockerUser) { $DockerUser = "abdulbakitopcu" }
+if (-not $OrchHost) { Write-Host "ERROR: OrchHost required! Set ORCH_HOST in .env or pass -OrchHost" -ForegroundColor Red; exit 1 }
+if (-not $OrchPort) { $OrchPort = "50051" }
 
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "DB DEPLOYMENT" -ForegroundColor Cyan

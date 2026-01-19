@@ -1,14 +1,24 @@
 # ============================================
 # ORCHESTRATOR - Parameterized Deploy Script
 # ============================================
-# Usage: .\1_orchestrator.ps1 -Token "ghp_xxx" -DockerUser "abdulbakitopcu" -GrpcPort "50051" -RabbitPort "5672"
+# Usage: .\1_orchestrator.ps1 -GrpcPort "50051" -RabbitPort "5672"
+
+# Load environment variables from .env
+$envFile = Join-Path $PSScriptRoot ".env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        if ($_ -match '^([^#=]+)=(.*)$') {
+            [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), "Process")
+        }
+    }
+}
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$Token = "<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>",
+    [string]$Token = $env:GH_TOKEN,
     
     [Parameter(Mandatory=$false)]
-    [string]$DockerUser = "abdulbakitopcu",
+    [string]$DockerUser = $env:DOCKER_USER,
     
     [Parameter(Mandatory=$false)]
     [string]$GrpcPort = "50051",
@@ -17,11 +27,14 @@ param(
     [string]$RabbitPort = "5672"
 )
 
+# Set defaults if not from env
+if (-not $Token) { $Token = "<TOKEN>" }
+if (-not $DockerUser) { $DockerUser = "abdulbakitopcu" }
+
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "ORCHESTRATOR DEPLOYMENT" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 
-# Push code to GitHub
 cd C:\Users\HP\Desktop\Projeler\Bitirme
 git add .
 git commit -m "Update"
