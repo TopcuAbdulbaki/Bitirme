@@ -644,8 +644,8 @@ class NewsCrawler:
                         valid_results = [r for r in results if r]
                         
                         for news_item in valid_results:
-                            # Send to Orchestrator
-                            if self.grpc_client and self.grpc_client.is_connected:
+                            # Send to Orchestrator (FIXED: check _stub instead of is_connected)
+                            if self.grpc_client and self.grpc_client._stub:
                                 self.grpc_client.send_crawl_result(news_item)
                             
                             self.results.append(news_item)
