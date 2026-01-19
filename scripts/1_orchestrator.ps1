@@ -21,6 +21,9 @@ param(
     [string]$DockerUser = $env:DOCKER_USER,
     
     [Parameter(Mandatory=$false)]
+    [string]$DockerToken = $env:DOCKER_TOKEN,
+    
+    [Parameter(Mandatory=$false)]
     [string]$GrpcPort = "50051",
     
     [Parameter(Mandatory=$false)]
@@ -30,6 +33,7 @@ param(
 # Set defaults if not from env
 if (-not $Token) { $Token = "<TOKEN>" }
 if (-not $DockerUser) { $DockerUser = "abdulbakitopcu" }
+if (-not $DockerToken) { $DockerToken = "<DOCKER_TOKEN>" }
 
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "ORCHESTRATOR DEPLOYMENT" -ForegroundColor Cyan
@@ -48,7 +52,7 @@ sudo apt-get update && sudo apt-get upgrade -y
 sudo apt-get install -y git curl
 curl -fsSL https://get.docker.com | sh
 sudo service docker start
-sudo docker login -u $DockerUser
+echo "$DockerToken" | sudo docker login -u $DockerUser --password-stdin
 
 # --- FRESH DEPLOY ---
 git clone https://$Token@github.com/TopcuAbdulbaki/Bitirme.git

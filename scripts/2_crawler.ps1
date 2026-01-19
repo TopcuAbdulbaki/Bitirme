@@ -24,12 +24,16 @@ param(
     [string]$OrchPort = $env:ORCH_PORT,
     
     [Parameter(Mandatory=$false)]
-    [string]$DockerUser = $env:DOCKER_USER
+    [string]$DockerUser = $env:DOCKER_USER,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$DockerToken = $env:DOCKER_TOKEN
 )
 
 # Set defaults if not from env
 if (-not $Token) { $Token = "<TOKEN>" }
 if (-not $DockerUser) { $DockerUser = "abdulbakitopcu" }
+if (-not $DockerToken) { $DockerToken = "<DOCKER_TOKEN>" }
 if (-not $OrchHost) { Write-Host "ERROR: OrchHost required! Set ORCH_HOST in .env or pass -OrchHost" -ForegroundColor Red; exit 1 }
 if (-not $OrchPort) { $OrchPort = "50051" }
 
@@ -50,7 +54,7 @@ sudo apt-get update && sudo apt-get upgrade -y
 sudo apt-get install -y git curl
 curl -fsSL https://get.docker.com | sh
 sudo service docker start
-sudo docker login -u $DockerUser
+echo "$DockerToken" | sudo docker login -u $DockerUser --password-stdin
 
 # --- FRESH DEPLOY ---
 git clone https://$Token@github.com/TopcuAbdulbaki/Bitirme.git
