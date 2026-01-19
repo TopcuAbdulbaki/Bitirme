@@ -1,5 +1,8 @@
 # Vast.ai Deployment Guide
 
+> [!CAUTION]
+> **Security Warning:** Never commit tokens (GitHub PAT, Docker Hub, etc.) to version control, even in private repositories. Use environment variables or `.env` files (added to `.gitignore`) instead. If you accidentally expose a token, revoke it immediately at https://github.com/settings/tokens
+
 This guide details how to deploy the distributed system on Vast.ai using Docker.
 
 ## 1. Prerequisites
