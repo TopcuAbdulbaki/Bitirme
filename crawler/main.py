@@ -11,12 +11,10 @@ from urllib.parse import unquote
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
 # Distributed mode imports
-# Distributed mode imports
-# Distributed mode imports
 # try:
-from crawler.config import CRAWLER_MODE, CRAWLER_DEMO_MODE, CRAWLER_DEMO_LIMIT
+from crawler.config import CRAWLER_MODE, CRAWLER_DEMO_MODE, CRAWLER_DEMO_LIMIT, POLL_INTERVAL
 from crawler.services.grpc_client import GRPCClient, NodeStatus
-from crawler.services.grpc_server import GRPCServer
+# GRPCServer no longer needed - using poll model
 DISTRIBUTED_AVAILABLE = True
 # except ImportError:
 #     DISTRIBUTED_AVAILABLE = False
@@ -26,7 +24,8 @@ DISTRIBUTED_AVAILABLE = True
 # ⚙️ Configurations
 Config = {
     "search_query": "Turkey OR Türkiye OR Turkiye",
-    "days_back": 3,
+    "time_unit": "h",    # h=hour, d=day, w=week, m=month
+    "time_value": 1,     # e.g., 1 hour, 6 hours, 1 day, 3 days
     "required_keywords": ["turkey", "türkiye", "turkiye", "ankara", "istanbul", "turkish"],
     "max_images": 3  # Maximum images per article
 }
@@ -191,10 +190,13 @@ class NewsCrawler:
         
         print(f"\n🌍 {source['name']} ({source['domain']}) taranıyor...")
         
+        # Build time filter: qdr:h1, qdr:d3, qdr:w, etc.
+        time_filter = f"qdr:{Config['time_unit']}{Config['time_value']}"
+        
         google_url = (
             f"https://www.google.com/search?"
             f"q=site:{source['domain']}+({Config['search_query']})"
-            f"&tbs=qdr:d{Config['days_back']}&hl=tr&num=20" # num=20 eklendi
+            f"&tbs={time_filter}&hl=tr&num=20"
         )
 
         # 🪄 MAGIC UPDATE: Google bot korumasını aşmak için özel ayarlar
@@ -664,40 +666,45 @@ class NewsCrawler:
         """Main execution method."""
         print("🤖 CRAWLER NODE INITIALIZING...")
         
-        # 1. Initialize Server (even if standalone, though mostly for distributed callbacks)
-        self.server = None
-        if DISTRIBUTED_AVAILABLE and CRAWLER_MODE == 'distributed':
-            self.server = GRPCServer(self)
-            await self.server.start()
-        
-        # 2. Connect Client & Register
+        # Connect Client & Register (no server needed - poll model!)
         if self.grpc_client:
             if self.grpc_client.connect():
                 self.grpc_client.register()
                 self.grpc_client.set_status(NodeStatus.IDLE)
-                print("[Crawler] Connected & Registered. Waiting for tasks...")
+                print("[Crawler] Connected & Registered. Polling for tasks...")
             else:
                 raise ConnectionError("Could not connect to Orchestrator in DISTRIBUTED mode.")
         else:
-             # Standalone mode - just run once immediately
-             print("[Crawler] Standalone Mode - Running immediately.")
-             await self.execute_crawl_task()
-             return
+            # Standalone mode - just run once immediately
+            print("[Crawler] Standalone Mode - Running immediately.")
+            await self.execute_crawl_task()
+            return
 
-        # 3. Wait Loop (Keep process alive for callbacks)
+        # Start heartbeat in background
+        self._heartbeat_task = asyncio.create_task(self.grpc_client.start_heartbeat_loop())
+        
+        # Poll loop - ask Orchestrator for work
         try:
             while True:
-                # Keep sending heartbeats via client background task or just sleep
-                # The client has start_heartbeat_loop() which we should use
-                if not getattr(self, '_heartbeat_task', None):
-                    self._heartbeat_task = asyncio.create_task(self.grpc_client.start_heartbeat_loop())
+                # Poll for task
+                has_task, task_id, urls, config_json = self.grpc_client.get_crawl_task()
                 
-                await asyncio.sleep(1)
+                if has_task:
+                    print(f"[Crawler] *** TASK RECEIVED: {task_id} ***")
+                    self.grpc_client.set_status(NodeStatus.BUSY)
+                    
+                    # Execute the crawl
+                    await self.execute_crawl_task(urls if urls else None)
+                    
+                    self.grpc_client.set_status(NodeStatus.IDLE)
+                    print(f"[Crawler] *** TASK COMPLETE: {task_id} ***")
+                
+                await asyncio.sleep(POLL_INTERVAL)
+                
         except asyncio.CancelledError:
             print("[Crawler] Stopping...")
         finally:
-            if self.server:
-                await self.server.stop()
+            self._heartbeat_task.cancel()
             if self.grpc_client:
                 self.grpc_client.stop()
 

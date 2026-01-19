@@ -1,40 +1,57 @@
 # ============================================
-# ORCHESTRATOR - Build & Run on Vast.ai
+# ORCHESTRATOR - Parameterized Deploy Script
 # ============================================
+# Usage: .\1_orchestrator.ps1 -Token "ghp_xxx" -DockerUser "abdulbakitopcu" -GrpcPort "50051" -RabbitPort "5672"
 
-# ==========================================
-# STEP 1: PUSH CODE TO GITHUB (Run on Windows)
-# ==========================================
+param(
+    [Parameter(Mandatory=$false)]
+    [string]$Token = "<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>",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$DockerUser = "abdulbakitopcu",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$GrpcPort = "50051",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$RabbitPort = "5672"
+)
+
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "ORCHESTRATOR DEPLOYMENT" -ForegroundColor Cyan
+Write-Host "============================================" -ForegroundColor Cyan
+
+# Push code to GitHub
 cd C:\Users\HP\Desktop\Projeler\Bitirme
 git add .
 git commit -m "Update"
 git push origin master
 
+Write-Host "`n=== COPY-PASTE THIS ON VAST.AI ORCHESTRATOR ===" -ForegroundColor Green
+Write-Host @"
 
-# ==========================================
-# STEP 2: ON VAST.AI ORCHESTRATOR MACHINE (Copy-paste below)
-# ==========================================
-
-# --- SYSTEM UPDATES (Run once or when needed) ---
+# --- SYSTEM UPDATES ---
 sudo apt-get update && sudo apt-get upgrade -y
 sudo apt-get install -y git curl
 curl -fsSL https://get.docker.com | sh
 sudo service docker start
-sudo docker login -u abdulbakitopcu
+sudo docker login -u $DockerUser
 
-# --- FRESH DEPLOY (First time) ---
-git clone https://<TOKEN>@github.com/TopcuAbdulbaki/Bitirme.git
+# --- FRESH DEPLOY ---
+git clone https://$Token@github.com/TopcuAbdulbaki/Bitirme.git
 cd Bitirme
-sudo docker build -f orchestrator/Dockerfile -t abdulbakitopcu/orchestrator:latest .
-sudo docker push abdulbakitopcu/orchestrator:latest
-sudo docker run -d --name orchestrator -p 50051:50051 -p 5672:5672 --restart unless-stopped abdulbakitopcu/orchestrator:latest
+sudo docker build -f orchestrator/Dockerfile -t $DockerUser/orchestrator:latest .
+sudo docker push $DockerUser/orchestrator:latest
+sudo docker run -d --name orchestrator -p $GrpcPort`:$GrpcPort -p $RabbitPort`:$RabbitPort --restart unless-stopped $DockerUser/orchestrator:latest
 sudo docker logs orchestrator -f
 
-# --- UPDATE (Code changed) ---
+# --- UPDATE ---
 cd ~/Bitirme
 git pull origin master
-sudo docker build -f orchestrator/Dockerfile -t abdulbakitopcu/orchestrator:latest .
-sudo docker push abdulbakitopcu/orchestrator:latest
+sudo docker build -f orchestrator/Dockerfile -t $DockerUser/orchestrator:latest .
+sudo docker push $DockerUser/orchestrator:latest
 sudo docker rm -f orchestrator
-sudo docker run -d --name orchestrator -p 50051:50051 -p 5672:5672 --restart unless-stopped abdulbakitopcu/orchestrator:latest
+sudo docker run -d --name orchestrator -p $GrpcPort`:$GrpcPort -p $RabbitPort`:$RabbitPort --restart unless-stopped $DockerUser/orchestrator:latest
 sudo docker logs orchestrator -f
+
+"@

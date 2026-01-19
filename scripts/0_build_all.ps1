@@ -16,11 +16,12 @@ curl -fsSL https://get.docker.com | sh
 sudo service docker start
 
 # Clone (replace YOUR_TOKEN)
-git clone https://<YOUR_GITHUB_TOKEN>@github.com/TopcuAbdulbaki/Bitirme.git
+git clone https://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@github.com/TopcuAbdulbaki/Bitirme.git
 cd Bitirme
 
 # Login to Docker Hub
-sudo docker login -u abdulbakitopcu
+sudo docker login -u abdulbakitopcu dckr_pat_8revBFZUNNeaMuqjK4_CNWh49no
+
 
 # Build ALL
 sudo docker build -f orchestrator/Dockerfile -t abdulbakitopcu/orchestrator:latest .

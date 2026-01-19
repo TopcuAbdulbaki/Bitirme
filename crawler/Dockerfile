@@ -48,12 +48,12 @@ RUN sed -i 's/^import orchestrator_pb2/from . import orchestrator_pb2/' crawler/
 # USER appuser
 
 # Environment Variables (Defaults)
-ENV GRPC_PORT=50052
+# NOTE: No GRPC_PORT needed - Crawler uses POLL model (no incoming connections)
 ENV ORCHESTRATOR_HOST=orchestrator
 ENV ORCHESTRATOR_PORT=50051
 
-# Expose ports
-EXPOSE 50052
+# No ports exposed - Crawler only makes OUTBOUND connections to Orchestrator
 
-# Run Crawler (Server Mode)
+# Run Crawler (Poll Mode)
 CMD ["python", "-m", "crawler.main"]
+

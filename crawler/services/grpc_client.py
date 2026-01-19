@@ -61,24 +61,11 @@ class GRPCClient:
         if not self._stub:
             return False
         try:
-            # Use PUBLIC_HOST if set (for distributed mode), otherwise local IP
-            from crawler.config import CRAWLER_GRPC_PORT, PUBLIC_HOST, PUBLIC_PORT
-            
-            if PUBLIC_HOST:
-                # Distributed mode: use public IP/port for callbacks
-                register_host = PUBLIC_HOST
-                register_port = PUBLIC_PORT
-                print(f"[gRPC] Registering with PUBLIC address: {register_host}:{register_port}")
-            else:
-                # Local mode: use internal IP
-                hostname = socket.gethostname()
-                register_host = socket.gethostbyname(hostname)
-                register_port = CRAWLER_GRPC_PORT
-            
+            # Poll model: No need to send host/port since Crawler will poll for tasks
             request = pb2.RegisterRequest(
                 node_type="crawler",
-                host=register_host,
-                port=register_port
+                host="",  # Not needed for poll model
+                port=0    # Not needed for poll model
             )
             response = self._stub.Register(request)
             if response.success:
@@ -129,6 +116,26 @@ class GRPCClient:
         except grpc.RpcError as e:
             print(f"[gRPC] Send error: {e}")
             return False
+    
+    def get_crawl_task(self):
+        """
+        Poll model: Ask Orchestrator if there's work to do.
+        Returns (has_task, task_id, urls, config_json) or (False, None, None, None).
+        """
+        if not self._stub or not self._node_id:
+            return (False, None, None, None)
+        
+        try:
+            request = pb2.GetCrawlTaskRequest(node_id=self._node_id)
+            response = self._stub.GetCrawlTask(request)
+            
+            if response.has_task:
+                print(f"[gRPC] Received task: {response.task_id}")
+                return (True, response.task_id, list(response.urls), response.config_json)
+            return (False, None, None, None)
+        except grpc.RpcError as e:
+            print(f"[gRPC] Poll error: {e}")
+            return (False, None, None, None)
     
     async def start_heartbeat_loop(self):
         self._running = True

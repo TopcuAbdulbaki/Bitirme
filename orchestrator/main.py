@@ -43,6 +43,10 @@ class Orchestrator:
         # Pipeline manager
         self.pipeline = PipelineManager(self.registry, self.rabbitmq)
         
+        # Crawl control (poll model)
+        self.crawl_active = False  # Manual start/stop
+        self._crawl_task_given = {}  # Track which crawlers have received tasks
+        
         # Wire up callbacks
         self._setup_callbacks()
         
@@ -53,6 +57,7 @@ class Orchestrator:
         self.grpc_server.on_crawl_result = self._handle_crawl_result
         self.grpc_server.on_vlm_result = self._handle_vlm_result
         self.grpc_server.on_llm_result = self._handle_llm_result
+        self.grpc_server.get_crawl_task = self._get_crawl_task  # Poll model
     
     def _handle_crawl_result(self, result):
         """Handle incoming crawl results."""
@@ -83,27 +88,37 @@ class Orchestrator:
                 for node_id in timed_out:
                     print(f"[Orchestrator] Node offline: {node_id}")
             await asyncio.sleep(HEARTBEAT_TIMEOUT // 2)
-
-    async def _auto_trigger_task(self):
+    
+    def _get_crawl_task(self, node_id: str):
         """
-        Background task to auto-trigger the crawl once a crawler is available.
-        This provides the 'Auto-Start' behavior the user expects but via 'ExecuteCrawl'.
+        Poll model callback: Called when Crawler asks for work.
+        Returns (has_task, task_id, urls, config_json).
         """
-        print("[Orchestrator] Waiting for a Crawler to connect...")
-        while self._running:
-            # Check if any crawler is registered
-            crawlers = self.registry.get_nodes_by_type(self.registry.NodeType.CRAWLER) # access enum via instance or class? Wrapper has it? 
-            # Note: NodeType is imported in main? No.
-            # let's use string check or fix imports. 
-            # Better: self.registry.get_idle_node uses the Enum.
-            # We can try to trigger every 5 seconds until successful.
-            
-            success = await self.pipeline.trigger_crawl([]) # Empty list = Default sources
-            if success:
-                print("[Orchestrator] Initial Crawl Triggered! (Auto-Start)")
-                break # Run once on startup
-            
-            await asyncio.sleep(5)
+        if not self.crawl_active:
+            return (False, None, None, None)
+        
+        # Check if this crawler already has a task
+        if node_id in self._crawl_task_given and self._crawl_task_given[node_id]:
+            return (False, None, None, None)
+        
+        # Give task to crawler
+        import uuid
+        task_id = f"crawl_{uuid.uuid4().hex[:8]}"
+        self._crawl_task_given[node_id] = True
+        
+        print(f"[Orchestrator] Crawl task assigned to {node_id}")
+        return (True, task_id, [], "")  # Empty URLs = use default sources
+    
+    def start_crawl(self):
+        """Start crawling (called manually)."""
+        print("[Orchestrator] *** CRAWL STARTED ***")
+        self.crawl_active = True
+        self._crawl_task_given = {}  # Reset
+    
+    def stop_crawl(self):
+        """Stop crawling."""
+        print("[Orchestrator] *** CRAWL STOPPED ***")
+        self.crawl_active = False
 
     
     def start(self):
@@ -137,24 +152,60 @@ class Orchestrator:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # Start heartbeat task but don't block on it
+            # Start heartbeat task
             heartbeat_task = loop.create_task(self._heartbeat_checker())
-            trigger_task = loop.create_task(self._auto_trigger_task())
             
-            # Wait for keyboard interrupt
+            # Start command input task
+            input_task = loop.create_task(self._command_loop())
+            
             try:
                 loop.run_forever()
             except KeyboardInterrupt:
                 pass
             finally:
                 heartbeat_task.cancel()
-                trigger_task.cancel()
+                input_task.cancel()
                 loop.close()
                 
         except KeyboardInterrupt:
             pass
         finally:
             self.stop()
+    
+    async def _command_loop(self):
+        """Command input loop for manual control."""
+        print("=" * 50)
+        print("COMMANDS: 'start' - Begin crawling")
+        print("          'stop'  - Stop crawling")
+        print("          'status'- Show status")
+        print("          'quit'  - Exit")
+        print("=" * 50)
+        
+        while self._running:
+            try:
+                # Non-blocking input using asyncio
+                cmd = await asyncio.get_event_loop().run_in_executor(
+                    None, 
+                    lambda: input("\n[Command] > ").strip().lower()
+                )
+                
+                if cmd == "start":
+                    self.start_crawl()
+                elif cmd == "stop":
+                    self.stop_crawl()
+                elif cmd == "status":
+                    status = self.get_status()
+                    print(f"[Status] Nodes: {status['nodes']}, Crawl Active: {self.crawl_active}")
+                elif cmd == "quit" or cmd == "exit":
+                    break
+                else:
+                    print("[Unknown command. Use: start, stop, status, quit]")
+                    
+            except (EOFError, KeyboardInterrupt):
+                break
+            except Exception as e:
+                print(f"[Error] {e}")
+                await asyncio.sleep(1)
     
     def stop(self):
         """Stop all services."""
@@ -193,3 +244,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

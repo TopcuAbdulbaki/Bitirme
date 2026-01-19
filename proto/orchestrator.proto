@@ -60,6 +60,18 @@ message CrawlTaskResponse {
   string error_message = 4;
 }
 
+// Poll model: Crawler asks for work
+message GetCrawlTaskRequest {
+  string node_id = 1;           // Crawler's node ID
+}
+
+message GetCrawlTaskResponse {
+  bool has_task = 1;            // True if there's work to do
+  string task_id = 2;           // Task ID (empty if no task)
+  repeated string urls = 3;     // URLs to crawl (empty if no task)
+  string config_json = 4;       // Optional config overrides
+}
+
 // ============================================================================
 // DATABASE MESSAGES
 // ============================================================================
@@ -130,6 +142,9 @@ service OrchestratorService {
   // --- Common for all nodes ---
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // --- Crawler polls for tasks (POLL MODEL) ---
+  rpc GetCrawlTask(GetCrawlTaskRequest) returns (GetCrawlTaskResponse);
   
   // --- Crawler reports results ---
   rpc ReportCrawlResult(CrawlTaskResponse) returns (HeartbeatResponse);

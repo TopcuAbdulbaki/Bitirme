@@ -1,58 +1,66 @@
 # ============================================
-# CRAWLER - Build & Run on Vast.ai
+# CRAWLER - Parameterized Deploy Script (POLL MODEL)
 # ============================================
+# Usage: .\2_crawler.ps1 -OrchHost "116.102.85.223" -OrchPort "63567"
+# 
+# NOTE: No more PUBLIC_HOST/PORT needed! Crawler uses poll model now.
 
-# ==========================================
-# STEP 1: PUSH CODE TO GITHUB (Run on Windows)
-# ==========================================
+param(
+    [Parameter(Mandatory=$false)]
+    [string]$Token = "<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>",
+    
+    [Parameter(Mandatory=$true)]
+    [string]$OrchHost,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$OrchPort,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$DockerUser = "abdulbakitopcu"
+)
+
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "CRAWLER DEPLOYMENT (POLL MODEL)" -ForegroundColor Cyan
+Write-Host "============================================" -ForegroundColor Cyan
+
 cd C:\Users\HP\Desktop\Projeler\Bitirme
 git add .
 git commit -m "Update"
 git push origin master
 
+Write-Host "`n=== COPY-PASTE THIS ON VAST.AI CRAWLER ===" -ForegroundColor Green
+Write-Host @"
 
-# ==========================================
-# STEP 2: ON VAST.AI CRAWLER MACHINE (Copy-paste below)
-# ==========================================
-
-# --- SYSTEM UPDATES (Run once or when needed) ---
+# --- SYSTEM UPDATES ---
 sudo apt-get update && sudo apt-get upgrade -y
 sudo apt-get install -y git curl
 curl -fsSL https://get.docker.com | sh
 sudo service docker start
-sudo docker login -u abdulbakitopcu
+sudo docker login -u $DockerUser
 
-# --- FRESH DEPLOY (First time) ---
-git clone https://<TOKEN>@github.com/TopcuAbdulbaki/Bitirme.git
+# --- FRESH DEPLOY ---
+git clone https://$Token@github.com/TopcuAbdulbaki/Bitirme.git
 cd Bitirme
-sudo docker login -u abdulbakitopcu
-sudo docker build -f crawler/Dockerfile -t abdulbakitopcu/crawler:latest .
-sudo docker push abdulbakitopcu/crawler:latest
-CRAWLER_IP=$(curl -s ifconfig.me)
-echo "Crawler IP: $CRAWLER_IP"
+sudo docker build -f crawler/Dockerfile -t $DockerUser/crawler:latest .
+sudo docker push $DockerUser/crawler:latest
 sudo docker run -d --name crawler \
-  -p 50052:50052 \
   --restart unless-stopped \
-  -e ORCHESTRATOR_HOST=<ORCH_IP> \
-  -e ORCHESTRATOR_PORT=<ORCH_PORT> \
-  -e PUBLIC_HOST=$CRAWLER_IP \
-  -e PUBLIC_PORT=<MAPPED_PORT_50052> \
-  abdulbakitopcu/crawler:latest
+  -e ORCHESTRATOR_HOST=$OrchHost \
+  -e ORCHESTRATOR_PORT=$OrchPort \
+  $DockerUser/crawler:latest
 sudo docker logs crawler -f
 
-# --- UPDATE (Code changed) ---
+# --- UPDATE ---
 cd ~/Bitirme
 git pull origin master
-sudo docker build -f crawler/Dockerfile -t abdulbakitopcu/crawler:latest .
-sudo docker push abdulbakitopcu/crawler:latest
+sudo docker build -f crawler/Dockerfile -t $DockerUser/crawler:latest .
+sudo docker push $DockerUser/crawler:latest
 sudo docker rm -f crawler
-CRAWLER_IP=$(curl -s ifconfig.me)
 sudo docker run -d --name crawler \
-  -p 50052:50052 \
   --restart unless-stopped \
-  -e ORCHESTRATOR_HOST=<ORCH_IP> \
-  -e ORCHESTRATOR_PORT=<ORCH_PORT> \
-  -e PUBLIC_HOST=$CRAWLER_IP \
-  -e PUBLIC_PORT=<MAPPED_PORT_50052> \
-  abdulbakitopcu/crawler:latest
+  -e ORCHESTRATOR_HOST=$OrchHost \
+  -e ORCHESTRATOR_PORT=$OrchPort \
+  $DockerUser/crawler:latest
 sudo docker logs crawler -f
+
+"@

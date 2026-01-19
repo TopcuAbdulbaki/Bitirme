@@ -22,11 +22,12 @@ class OrchestratorServicer(pb2_grpc.OrchestratorServiceServicer):
     Handles node registration, heartbeats, and result reporting.
     """
     
-    def __init__(self, registry: NodeRegistry, on_crawl_result=None, on_vlm_result=None, on_llm_result=None):
+    def __init__(self, registry: NodeRegistry, on_crawl_result=None, on_vlm_result=None, on_llm_result=None, get_crawl_task=None):
         self.registry = registry
         self.on_crawl_result = on_crawl_result
         self.on_vlm_result = on_vlm_result
         self.on_llm_result = on_llm_result
+        self.get_crawl_task = get_crawl_task  # Callback to get task for crawler
         print("[gRPC] OrchestratorServicer initialized")
     
     def Register(self, request, context):
@@ -56,6 +57,23 @@ class OrchestratorServicer(pb2_grpc.OrchestratorServiceServicer):
             print(f"[gRPC] Heartbeat from unknown node: {request.node_id}")
         
         return pb2.HeartbeatResponse(acknowledged=success)
+    
+    def GetCrawlTask(self, request, context):
+        """
+        Poll model: Crawler asks for work.
+        Returns a task if crawling is active, otherwise returns empty.
+        """
+        if self.get_crawl_task:
+            has_task, task_id, urls, config_json = self.get_crawl_task(request.node_id)
+            if has_task:
+                print(f"[gRPC] Giving crawl task to: {request.node_id}")
+            return pb2.GetCrawlTaskResponse(
+                has_task=has_task,
+                task_id=task_id or "",
+                urls=urls or [],
+                config_json=config_json or ""
+            )
+        return pb2.GetCrawlTaskResponse(has_task=False)
     
     def ReportCrawlResult(self, request, context):
         """Receive crawl results from Crawler node."""
@@ -110,6 +128,7 @@ class GRPCServer:
         self.on_crawl_result = None
         self.on_vlm_result = None
         self.on_llm_result = None
+        self.get_crawl_task = None  # Poll model callback
     
     def start(self, max_workers: int = 10):
         """Start the gRPC server."""
@@ -125,7 +144,8 @@ class GRPCServer:
             self.registry,
             on_crawl_result=self.on_crawl_result,
             on_vlm_result=self.on_vlm_result,
-            on_llm_result=self.on_llm_result
+            on_llm_result=self.on_llm_result,
+            get_crawl_task=self.get_crawl_task
         )
         
         pb2_grpc.add_OrchestratorServiceServicer_to_server(servicer, self._server)
