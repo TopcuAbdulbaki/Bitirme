@@ -25,7 +25,7 @@ DISTRIBUTED_AVAILABLE = True
 Config = {
     "search_query": "Turkey OR Türkiye OR Turkiye",
     "time_unit": "h",    # h=hour, d=day, w=week, m=month
-    "time_value": 1,     # e.g., 1 hour, 6 hours, 1 day, 3 days
+    "time_value": 12,    # 12 hours (last 12 hours of news)
     "required_keywords": ["turkey", "türkiye", "turkiye", "ankara", "istanbul", "turkish"],
     "max_images": 3  # Maximum images per article
 }
