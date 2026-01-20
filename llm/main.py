@@ -87,17 +87,20 @@ class LLMNode:
             original = data.get('original', data)
             vlm_analysis = data.get('vlm_analysis', {})
             
-            # Build context for analysis
+            # Build text for analysis (combine title and content)
             title = original.get('title', '')
             content = original.get('content', '')
             source = original.get('source', '')
             
+            text = f"[Source: {source}]\n\n{title}\n\n{content}" if title else content
+            
+            # Convert vlm_analysis to list format expected by handler
+            vlm_results = vlm_analysis.get('results', []) if isinstance(vlm_analysis, dict) else []
+            
             # Analyze text
             result = await self.model_handler.analyze_text(
-                title=title,
-                content=content,
-                source=source,
-                vlm_context=vlm_analysis
+                text=text,
+                vlm_results=vlm_results
             )
             
             print(f"[LLM Node] Completed analysis for {task_id}: sentiment={result.sentiment}")
@@ -106,7 +109,7 @@ class LLMNode:
         except Exception as e:
             print(f"[LLM Node] Error processing task: {e}")
             return TextAnalysisResult(
-                summary="", sentiment="neutral",
+                summary="", sentiment=0, sentiment_label="neutral",
                 keywords=[], entities={}, category="other",
                 relevance_to_topic="low", error=str(e)
             )

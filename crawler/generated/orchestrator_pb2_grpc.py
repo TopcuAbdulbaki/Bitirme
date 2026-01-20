@@ -48,6 +48,11 @@ class OrchestratorServiceStub(object):
                 request_serializer=orchestrator__pb2.HeartbeatRequest.SerializeToString,
                 response_deserializer=orchestrator__pb2.HeartbeatResponse.FromString,
                 _registered_method=True)
+        self.GetCrawlTask = channel.unary_unary(
+                '/bitirme.OrchestratorService/GetCrawlTask',
+                request_serializer=orchestrator__pb2.GetCrawlTaskRequest.SerializeToString,
+                response_deserializer=orchestrator__pb2.GetCrawlTaskResponse.FromString,
+                _registered_method=True)
         self.ReportCrawlResult = channel.unary_unary(
                 '/bitirme.OrchestratorService/ReportCrawlResult',
                 request_serializer=orchestrator__pb2.CrawlTaskResponse.SerializeToString,
@@ -91,6 +96,13 @@ class OrchestratorServiceServicer(object):
 
     def Heartbeat(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetCrawlTask(self, request, context):
+        """--- Crawler polls for tasks (POLL MODEL) ---
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -141,6 +153,11 @@ def add_OrchestratorServiceServicer_to_server(servicer, server):
                     servicer.Heartbeat,
                     request_deserializer=orchestrator__pb2.HeartbeatRequest.FromString,
                     response_serializer=orchestrator__pb2.HeartbeatResponse.SerializeToString,
+            ),
+            'GetCrawlTask': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetCrawlTask,
+                    request_deserializer=orchestrator__pb2.GetCrawlTaskRequest.FromString,
+                    response_serializer=orchestrator__pb2.GetCrawlTaskResponse.SerializeToString,
             ),
             'ReportCrawlResult': grpc.unary_unary_rpc_method_handler(
                     servicer.ReportCrawlResult,
@@ -226,6 +243,33 @@ class OrchestratorService(object):
             '/bitirme.OrchestratorService/Heartbeat',
             orchestrator__pb2.HeartbeatRequest.SerializeToString,
             orchestrator__pb2.HeartbeatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetCrawlTask(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/bitirme.OrchestratorService/GetCrawlTask',
+            orchestrator__pb2.GetCrawlTaskRequest.SerializeToString,
+            orchestrator__pb2.GetCrawlTaskResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -9,6 +9,8 @@ package bitirme;
 // Node registration request - sent by any node type on first connect
 message RegisterRequest {
   string node_type = 1;  // "crawler", "vlm", "llm", "db"
+  string host = 2;       // Node's IP/Host for callbacks
+  int32 port = 3;        // Node's Port for callbacks
 }
 
 // Node registration response - Orchestrator assigns ID
@@ -56,6 +58,18 @@ message CrawlTaskResponse {
   TaskStatus status = 2;
   string json_data = 3;         // Crawled data as JSON string
   string error_message = 4;
+}
+
+// Poll model: Crawler asks for work
+message GetCrawlTaskRequest {
+  string node_id = 1;           // Crawler's node ID
+}
+
+message GetCrawlTaskResponse {
+  bool has_task = 1;            // True if there's work to do
+  string task_id = 2;           // Task ID (empty if no task)
+  repeated string urls = 3;     // URLs to crawl (empty if no task)
+  string config_json = 4;       // Optional config overrides
 }
 
 // ============================================================================
@@ -128,6 +142,9 @@ service OrchestratorService {
   // --- Common for all nodes ---
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // --- Crawler polls for tasks (POLL MODEL) ---
+  rpc GetCrawlTask(GetCrawlTaskRequest) returns (GetCrawlTaskResponse);
   
   // --- Crawler reports results ---
   rpc ReportCrawlResult(CrawlTaskResponse) returns (HeartbeatResponse);
