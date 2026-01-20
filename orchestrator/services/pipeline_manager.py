@@ -81,7 +81,7 @@ class PipelineManager:
         return task
     
     def on_crawl_complete(self, task_id: str, json_data: str):
-        """Handle completed crawl - send to DB for storage."""
+        """Handle completed crawl - send directly to VLM queue for analysis."""
         task = self._tasks.get(task_id)
         if not task:
             task = self.create_task(json_data)
@@ -89,25 +89,18 @@ class PipelineManager:
             task.raw_data = json_data
         
         task.stage = PipelineStage.CRAWLED
-        print(f"[Pipeline] {task_id} -> CRAWLED, ready for DB storage")
+        print(f"[Pipeline] {task_id} -> CRAWLED")
         
-        # Send to DB node via gRPC
-        db_node = self.registry.get_idle_node(NodeType.DB)
-        if not db_node:
-            print(f"[Pipeline] No DB node available for {task_id}")
-            return task
-            
-        try:
-            # Create synchronous gRPC call to DB
-            target = f"{db_node.host}:{db_node.port}" if db_node.host and db_node.port else "unknown"
-            print(f"[Pipeline] Sending {task_id} to DB node {db_node.node_id}")
-            
-            # Note: This is a simplified version - actual implementation would use gRPC
-            # For now, just mark as sent
-            print(f"[Pipeline] DB storage triggered for {task_id}")
-            
-        except Exception as e:
-            print(f"[Pipeline] Error sending to DB: {e}")
+        # Send directly to VLM queue for image analysis
+        if self.rabbitmq:
+            success = self.rabbitmq.publish_vlm_task(task.task_id, json_data)
+            if success:
+                task.stage = PipelineStage.VLM_ANALYZING
+                print(f"[Pipeline] {task.task_id} -> VLM_ANALYZING (published to queue)")
+            else:
+                print(f"[Pipeline] Failed to publish {task.task_id} to VLM queue")
+        else:
+            print(f"[Pipeline] RabbitMQ not available, cannot process {task_id}")
         
         return task
     
