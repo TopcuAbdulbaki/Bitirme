@@ -70,6 +70,18 @@ class VLMNode:
         
         return True
     
+    async def _download_image(self, url: str) -> bytes | None:
+        """Download image from URL and return bytes."""
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=10) as resp:
+                    if resp.status == 200:
+                        return await resp.read()
+        except Exception as e:
+            print(f"[VLM Node] Failed to download image {url[:50]}: {e}")
+        return None
+    
     async def process_task(self, task_id: str, json_data: str) -> list[ImageAnalysisResult]:
         """
         Process image analysis task.
@@ -97,24 +109,43 @@ class VLMNode:
             # Process main image
             main_image = media.get('main_image')
             if main_image:
-                image_path = main_image.get('minio_path') if isinstance(main_image, dict) else main_image
-                if isinstance(main_image, dict) and 'bytes' in main_image:
-                    result = await self.model_handler.analyze_image(
-                        main_image['bytes'],
-                        context
-                    )
-                    result.minio_path = image_path
+                image_bytes = None
+                image_url = None
+                
+                if isinstance(main_image, dict):
+                    image_bytes = main_image.get('bytes')
+                    image_url = main_image.get('url') or main_image.get('minio_path')
+                elif isinstance(main_image, str):
+                    image_url = main_image
+                
+                # Download if we only have URL
+                if not image_bytes and image_url and image_url.startswith('http'):
+                    image_bytes = await self._download_image(image_url)
+                
+                if image_bytes:
+                    result = await self.model_handler.analyze_image(image_bytes, context)
+                    result.minio_path = image_url
                     results.append(result)
             
             # Process content images
             content_images = media.get('content_images', [])
             for img in content_images[:3]:  # Limit to 3 images
-                if isinstance(img, dict) and 'bytes' in img:
-                    result = await self.model_handler.analyze_image(
-                        img['bytes'],
-                        context
-                    )
-                    result.minio_path = img.get('minio_path')
+                image_bytes = None
+                image_url = None
+                
+                if isinstance(img, dict):
+                    image_bytes = img.get('bytes')
+                    image_url = img.get('url') or img.get('minio_path')
+                elif isinstance(img, str):
+                    image_url = img
+                
+                # Download if we only have URL
+                if not image_bytes and image_url and image_url.startswith('http'):
+                    image_bytes = await self._download_image(image_url)
+                
+                if image_bytes:
+                    result = await self.model_handler.analyze_image(image_bytes, context)
+                    result.minio_path = image_url
                     results.append(result)
             
             print(f"[VLM Node] Processed {len(results)} images for task {task_id}")
