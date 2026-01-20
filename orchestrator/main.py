@@ -10,7 +10,10 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from orchestrator.config import GRPC_HOST, GRPC_PORT, HEARTBEAT_TIMEOUT
+from orchestrator.config import (
+    GRPC_HOST, GRPC_PORT, HEARTBEAT_TIMEOUT,
+    QUEUE_VLM_RESULTS, QUEUE_LLM_RESULTS
+)
 from orchestrator.services.node_registry import NodeRegistry
 from orchestrator.services.grpc_server import GRPCServer
 from orchestrator.services.pipeline_manager import PipelineManager
@@ -89,6 +92,33 @@ class Orchestrator:
                     print(f"[Orchestrator] Node offline: {node_id}")
             await asyncio.sleep(HEARTBEAT_TIMEOUT // 2)
     
+    async def _result_queue_poller(self):
+        """
+        Poll VLM/LLM result queues for completed tasks.
+        Connects RabbitMQ consumer side to pipeline handlers.
+        """
+        print("[Orchestrator] Starting result queue poller...")
+        
+        while self._running:
+            if self.rabbitmq:
+                try:
+                    # Check VLM results
+                    vlm_msg = self.rabbitmq.get_message(QUEUE_VLM_RESULTS)
+                    if vlm_msg:
+                        print(f"[Orchestrator] VLM result received: {vlm_msg.task_id}")
+                        self.pipeline.on_vlm_complete(vlm_msg.task_id, vlm_msg.json_data)
+                    
+                    # Check LLM results
+                    llm_msg = self.rabbitmq.get_message(QUEUE_LLM_RESULTS)
+                    if llm_msg:
+                        print(f"[Orchestrator] LLM result received: {llm_msg.task_id}")
+                        self.pipeline.on_llm_complete(llm_msg.task_id, llm_msg.json_data)
+                        
+                except Exception as e:
+                    print(f"[Orchestrator] Result queue poll error: {e}")
+            
+            await asyncio.sleep(0.5)
+    
     def _get_crawl_task(self, node_id: str):
         """
         Poll model callback: Called when Crawler asks for work.
@@ -155,6 +185,9 @@ class Orchestrator:
             # Start heartbeat task
             heartbeat_task = loop.create_task(self._heartbeat_checker())
             
+            # Start result queue poller
+            result_poller_task = loop.create_task(self._result_queue_poller())
+            
             # Start command input task
             input_task = loop.create_task(self._command_loop())
             
@@ -164,6 +197,7 @@ class Orchestrator:
                 pass
             finally:
                 heartbeat_task.cancel()
+                result_poller_task.cancel()
                 input_task.cancel()
                 loop.close()
                 
