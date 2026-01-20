@@ -196,7 +196,7 @@ class NewsCrawler:
         google_url = (
             f"https://www.google.com/search?"
             f"q=site:{source['domain']}+({Config['search_query']})"
-            f"&tbs={time_filter}&hl=tr&num=20"
+            f"&tbs={time_filter}&hl=en&num=30"  # Changed to English, increased results
         )
 
         # 🪄 MAGIC UPDATE: Google bot korumasını aşmak için özel ayarlar
@@ -205,7 +205,7 @@ class NewsCrawler:
             magic=True,              # Anti-bot tespiti aç
             simulate_user=True,      # Mouse ve scroll simülasyonu
             override_navigator=True, # Bot bayrağını gizle
-            wait_for="css:body",     # #search yerine body beklemek daha güvenli
+            wait_for="css:#search",  # Wait for search results specifically
             js_code="window.scrollTo(0, document.body.scrollHeight);",
             delay_before_return_html=random.uniform(4,5) # Rastgele bekleme
         )
@@ -220,17 +220,52 @@ class NewsCrawler:
             print(f"   ❌ {source['name']} için Google yanıt vermedi.")
             return []
 
-        # Find links with regex (Güncellenmiş Regex)
-        domain_escaped = re.escape(source['domain'])
-        pattern = fr'href=["\'].*?(https?://[^"\']*{domain_escaped}[^"\']*)["\']'
+        # DEBUG: Check what Google returned
+        html_len = len(result.html) if result.html else 0
+        has_captcha = "captcha" in result.html.lower() if result.html else False
+        has_consent = "consent.google" in result.html.lower() if result.html else False
         
-        found_links = re.findall(pattern, result.html)
+        if has_captcha:
+            print(f"   ⚠️ CAPTCHA detected! Google is blocking requests.")
+            return []
+        if has_consent:
+            print(f"   ⚠️ Consent page detected! Need to handle cookie consent.")
+            return []
+        if html_len < 5000:
+            print(f"   ⚠️ Short response ({html_len} bytes) - might be blocked")
+
+        # Multiple patterns to catch different Google HTML formats
+        domain_escaped = re.escape(source['domain'])
+        
+        patterns = [
+            # Pattern 1: Standard href with domain
+            fr'href="(https?://[^"]*{domain_escaped}[^"]*)"',
+            # Pattern 2: /url?q= redirect format
+            fr'/url\?q=(https?://[^&]*{domain_escaped}[^&]*)',
+            # Pattern 3: data-href attribute
+            fr'data-href="(https?://[^"]*{domain_escaped}[^"]*)"',
+            # Pattern 4: Catch URLs in any attribute
+            fr'="(https?://(?:www\.)?{domain_escaped}[^"]*)"',
+        ]
+        
+        all_found = []
+        for pattern in patterns:
+            found = re.findall(pattern, result.html)
+            all_found.extend(found)
+        
+        # DEBUG: Show pattern results
+        if not all_found:
+            print(f"   🔍 DEBUG: HTML length={html_len}, checking for domain...")
+            # Check if domain even exists in HTML
+            domain_count = result.html.lower().count(source['domain'].lower())
+            print(f"   🔍 DEBUG: Domain '{source['domain']}' appears {domain_count} times in HTML")
         
         clean_links = []
         all_blocked = GLOBAL_BLOCK_PATHS + source.get('block_paths', [])
         source_allowed_paths = source.get('allowed_paths', [])
 
-        for link in found_links:
+        for link in all_found:
+            # Handle /url?q= encoded links
             if "/url?q=" in link:
                 link = link.split("/url?q=")[1].split("&")[0]
             
