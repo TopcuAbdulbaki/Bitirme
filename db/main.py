@@ -11,10 +11,15 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from db.config import HEARTBEAT_INTERVAL
+from db.config import (
+    HEARTBEAT_INTERVAL,
+    RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASSWORD,
+    QUEUE_DB_TASKS
+)
 from db.services.grpc_client import GRPCClient, NodeStatus
 from db.services.postgres_manager import PostgresManager
 from db.services.minio_manager import MinIOManager
+from db.services.rabbitmq_consumer import RabbitMQConsumer
 
 
 class DBNode:
@@ -27,6 +32,12 @@ class DBNode:
         self.grpc_client = GRPCClient()
         self.postgres = PostgresManager()
         self.minio = MinIOManager()
+        self.rabbitmq = RabbitMQConsumer(
+            host=RABBITMQ_HOST,
+            port=RABBITMQ_PORT,
+            user=RABBITMQ_USER,
+            password=RABBITMQ_PASSWORD
+        )
         self._running = False
     
     async def initialize(self) -> bool:
@@ -52,10 +63,18 @@ class DBNode:
         if not minio_ok:
             print("[DB Node] Warning: MinIO not available")
         
+        # Connect to RabbitMQ
+        rabbitmq_ok = self.rabbitmq.connect()
+        if rabbitmq_ok:
+            self.rabbitmq.declare_queue(QUEUE_DB_TASKS)
+        else:
+            print("[DB Node] Warning: RabbitMQ not available")
+        
         print("=" * 50)
         print(f"[DB Node] Node ID: {self.grpc_client.node_id or 'Not registered'}")
         print(f"[DB Node] PostgreSQL: {'✓' if postgres_ok else '✗'}")
         print(f"[DB Node] MinIO: {'✓' if minio_ok else '✗'}")
+        print(f"[DB Node] RabbitMQ: {'✓' if rabbitmq_ok else '✗'}")
         print("=" * 50)
         
         return True
@@ -123,9 +142,18 @@ class DBNode:
         )
         
         try:
-            # Main loop - just keep running
+            print(f"[DB Node] Polling queue: {QUEUE_DB_TASKS}")
+            
+            # Main loop - poll for analysis tasks
             while self._running:
-                await asyncio.sleep(1)
+                # Check for analysis tasks from orchestrator
+                message = self.rabbitmq.get_message(QUEUE_DB_TASKS)
+                
+                if message:
+                    print(f"[DB Node] Received task: {message.task_id}")
+                    await self._process_analysis_task(message.task_id, message.json_data)
+                else:
+                    await asyncio.sleep(0.5)
                 
         except asyncio.CancelledError:
             pass
@@ -133,12 +161,60 @@ class DBNode:
             heartbeat_task.cancel()
             await self.shutdown()
     
+    async def _process_analysis_task(self, task_id: str, json_data: str):
+        """
+        Process analysis task from orchestrator.
+        Stores VLM and LLM results in database.
+        """
+        self.grpc_client.set_status(NodeStatus.BUSY)
+        
+        try:
+            data = json.loads(json_data)
+            
+            # Extract components
+            original = data.get('original', {})
+            vlm_analysis = data.get('vlm_analysis', {})
+            llm_analysis = data.get('llm_analysis', {})
+            
+            # Get or create news_id from original URL
+            url = original.get('url', task_id)
+            news_id = self.postgres.generate_news_id(url)
+            
+            # First, ensure the news item exists in DB
+            # Check if it exists, if not insert it
+            existing = await self.postgres.get_news_by_id(news_id)
+            if not existing:
+                # Insert the original news data
+                await self.postgres.insert_news(original)
+                print(f"[DB Node] Inserted news: {news_id}")
+            
+            # Save VLM results if present
+            if vlm_analysis and vlm_analysis.get('results'):
+                for result in vlm_analysis['results']:
+                    await self.postgres.save_vlm_analysis(news_id, result)
+                await self.postgres.mark_vlm_processed(news_id)
+                print(f"[DB Node] Saved VLM analysis for {news_id}")
+            
+            # Save LLM results if present
+            if llm_analysis and llm_analysis.get('result'):
+                await self.postgres.save_llm_analysis(news_id, llm_analysis['result'])
+                await self.postgres.mark_llm_processed(news_id)
+                print(f"[DB Node] Saved LLM analysis for {news_id}")
+            
+            print(f"[DB Node] Completed task: {task_id}")
+            
+        except Exception as e:
+            print(f"[DB Node] Error processing task {task_id}: {e}")
+        finally:
+            self.grpc_client.set_status(NodeStatus.IDLE)
+    
     async def shutdown(self):
         """Shutdown all connections."""
         print("\n[DB Node] Shutting down...")
         self._running = False
         
         self.grpc_client.stop()
+        self.rabbitmq.close()
         await self.postgres.close()
         
         print("[DB Node] Shutdown complete")

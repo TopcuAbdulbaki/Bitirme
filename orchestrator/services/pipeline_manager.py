@@ -4,8 +4,9 @@ Orchestrates the flow of data through the system.
 """
 import uuid
 import json
+from datetime import datetime, timedelta
 from typing import Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from .node_registry import NodeRegistry, NodeType
@@ -35,6 +36,8 @@ class PipelineTask:
     vlm_result: Optional[str] = None
     llm_result: Optional[str] = None
     error: Optional[str] = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
     
     def to_dict(self) -> dict:
         return {
@@ -143,7 +146,7 @@ class PipelineManager:
             print(f"[Pipeline] {task_id} -> LLM_ANALYZING")
     
     def on_llm_complete(self, task_id: str, result_json: str):
-        """Handle LLM analysis complete - store final results."""
+        """Handle LLM analysis complete - send to DB for storage."""
         task = self._tasks.get(task_id)
         if not task:
             print(f"[Pipeline] Unknown task: {task_id}")
@@ -151,9 +154,23 @@ class PipelineManager:
         
         task.llm_result = result_json
         task.stage = PipelineStage.COMPLETE
+        task.completed_at = datetime.utcnow()
         print(f"[Pipeline] {task_id} -> COMPLETE")
         
-        # TODO: Send final results to DB for storage
+        # Publish to DB queue for final storage
+        if self.rabbitmq:
+            try:
+                db_payload = json.dumps({
+                    'task_id': task_id,
+                    'original': json.loads(task.raw_data) if task.raw_data else {},
+                    'vlm_analysis': json.loads(task.vlm_result) if task.vlm_result else {},
+                    'llm_analysis': json.loads(result_json)
+                })
+                success = self.rabbitmq.publish_db_task(task_id, db_payload)
+                if success:
+                    print(f"[Pipeline] {task_id} -> Published to DB queue")
+            except Exception as e:
+                print(f"[Pipeline] Error publishing to DB queue: {e}")
     
     def on_task_failed(self, task_id: str, error: str):
         """Handle task failure."""
@@ -220,5 +237,14 @@ class PipelineManager:
 
     def cleanup_completed(self, max_age_seconds: int = 3600):
         """Remove completed tasks older than max_age."""
-        # TODO: Implement based on timestamps
-        pass
+        cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
+        to_remove = [
+            tid for tid, task in self._tasks.items()
+            if task.stage == PipelineStage.COMPLETE 
+            and task.completed_at 
+            and task.completed_at < cutoff
+        ]
+        for tid in to_remove:
+            del self._tasks[tid]
+        if to_remove:
+            print(f"[Pipeline] Cleaned up {len(to_remove)} old tasks")

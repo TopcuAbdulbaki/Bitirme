@@ -26,6 +26,15 @@ MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'admin123')
 MINIO_BUCKET = os.getenv('MINIO_BUCKET', 'news-media')
 MINIO_SECURE = os.getenv('MINIO_SECURE', 'false').lower() == 'true'
 
+# RabbitMQ Settings (DISTRIBUTED: Must be set via env vars)
+RABBITMQ_HOST = os.getenv('RABBITMQ_HOST')
+RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
+RABBITMQ_USER = os.getenv('RABBITMQ_USER', 'guest')
+RABBITMQ_PASSWORD = os.getenv('RABBITMQ_PASSWORD', 'guest')
+
+# Queue Names
+QUEUE_DB_TASKS = 'db_tasks'
+
 # Heartbeat Settings
 HEARTBEAT_INTERVAL = int(os.getenv('HEARTBEAT_INTERVAL', '10'))
 

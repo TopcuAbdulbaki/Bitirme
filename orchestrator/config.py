@@ -22,6 +22,7 @@ QUEUE_VLM_TASKS = 'vlm_tasks'
 QUEUE_VLM_RESULTS = 'vlm_results'
 QUEUE_LLM_TASKS = 'llm_tasks'
 QUEUE_LLM_RESULTS = 'llm_results'
+QUEUE_DB_TASKS = 'db_tasks'
 
 # Heartbeat Settings
 HEARTBEAT_INTERVAL = int(os.getenv('HEARTBEAT_INTERVAL', '10'))  # seconds

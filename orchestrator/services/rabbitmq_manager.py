@@ -9,7 +9,8 @@ from dataclasses import dataclass
 
 from ..config import (
     RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASSWORD,
-    QUEUE_VLM_TASKS, QUEUE_VLM_RESULTS, QUEUE_LLM_TASKS, QUEUE_LLM_RESULTS
+    QUEUE_VLM_TASKS, QUEUE_VLM_RESULTS, QUEUE_LLM_TASKS, QUEUE_LLM_RESULTS,
+    QUEUE_DB_TASKS
 )
 
 
@@ -46,7 +47,8 @@ class RabbitMQManager:
             QUEUE_VLM_TASKS,
             QUEUE_VLM_RESULTS,
             QUEUE_LLM_TASKS,
-            QUEUE_LLM_RESULTS
+            QUEUE_LLM_RESULTS,
+            QUEUE_DB_TASKS
         ]
     
     def connect(self) -> bool:
@@ -117,6 +119,11 @@ class RabbitMQManager:
         """Publish a task to LLM queue."""
         msg = QueueMessage(task_id=task_id, json_data=json_data)
         return self.publish(QUEUE_LLM_TASKS, msg)
+    
+    def publish_db_task(self, task_id: str, json_data: str) -> bool:
+        """Publish final results to DB queue for storage."""
+        msg = QueueMessage(task_id=task_id, json_data=json_data)
+        return self.publish(QUEUE_DB_TASKS, msg)
     
     def consume(self, queue_name: str, callback: Callable[[QueueMessage], None]):
         """
