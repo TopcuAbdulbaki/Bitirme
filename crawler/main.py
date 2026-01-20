@@ -205,18 +205,20 @@ class NewsCrawler:
             magic=True,              # Anti-bot tespiti aç
             simulate_user=True,      # Mouse ve scroll simülasyonu
             override_navigator=True, # Bot bayrağını gizle
-            wait_for="css:#search",  # Wait for search results specifically
+            wait_for="css:body",     # Wait for body (more lenient than #search)
+            page_timeout=30000,      # 30 second timeout
             js_code="window.scrollTo(0, document.body.scrollHeight);",
-            delay_before_return_html=random.uniform(4,5) # Rastgele bekleme
+            delay_before_return_html=random.uniform(3,4) # Rastgele bekleme
         )
 
         try:
             result = await crawler.arun(url=google_url, config=run_cfg)
         except Exception as e:
-            print(f"   ❌ Google Arama Hatası: {e}")
+            error_str = str(e)[:100]
+            print(f"   ⚠️ Google Timeout: {error_str}")
             return []
         
-        if not result.success:
+        if not result or not result.success:
             print(f"   ❌ {source['name']} için Google yanıt vermedi.")
             return []
 
