@@ -194,18 +194,23 @@ class TransformersHandler(BaseVLMHandler):
             return
         
         try:
-            from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+            from transformers import AutoModelForVision2Seq, AutoProcessor
             import torch
             
             device = "cuda" if torch.cuda.is_available() else "cpu"
             print(f"[VLM] Loading model on {device}...")
             
-            self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+            # Use AutoModelForVision2Seq for Qwen2/Qwen3 VL compatibility
+            self.model = AutoModelForVision2Seq.from_pretrained(
                 self.model_name,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                device_map="auto"
+                dtype=torch.float16 if device == "cuda" else torch.float32,
+                device_map="auto",
+                trust_remote_code=True  # Required for Qwen3
             )
-            self.processor = AutoProcessor.from_pretrained(self.model_name)
+            self.processor = AutoProcessor.from_pretrained(
+                self.model_name,
+                trust_remote_code=True
+            )
             
             self._loaded = True
             print(f"[VLM] Model loaded: {self.model_name}")
