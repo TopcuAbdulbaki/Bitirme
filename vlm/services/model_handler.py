@@ -194,16 +194,22 @@ class TransformersHandler(BaseVLMHandler):
             return
         
         try:
-            from transformers import AutoModelForVision2Seq, AutoProcessor
+            from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
             import torch
             
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            print(f"[VLM] Loading model on {device}...")
+            print(f"[VLM] Loading model on {device} with 8-bit quantization...")
+            
+            # 8-bit quantization config to reduce VRAM usage
+            quantization_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_threshold=6.0
+            )
             
             # Use AutoModelForVision2Seq for Qwen2/Qwen3 VL compatibility
             self.model = AutoModelForVision2Seq.from_pretrained(
                 self.model_name,
-                dtype=torch.float16 if device == "cuda" else torch.float32,
+                quantization_config=quantization_config,
                 device_map="auto",
                 trust_remote_code=True  # Required for Qwen3
             )
@@ -213,7 +219,7 @@ class TransformersHandler(BaseVLMHandler):
             )
             
             self._loaded = True
-            print(f"[VLM] Model loaded: {self.model_name}")
+            print(f"[VLM] Model loaded (8-bit): {self.model_name}")
             
         except Exception as e:
             print(f"[VLM] Failed to load model: {e}")
