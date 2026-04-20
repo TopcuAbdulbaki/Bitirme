@@ -137,6 +137,7 @@ class BrowserTool:
 
     async def _run_search(self, task: str, query: str) -> List[Dict[str, str]]:
         try:
+            # 10 adımda sonuç bulamazsa çok dağılmasın
             agent  = self._agent(task, max_steps=10)
             result = await agent.run()
             raw    = result.final_result() or ""
