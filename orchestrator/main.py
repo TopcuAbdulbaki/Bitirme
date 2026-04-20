@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from orchestrator.config import (
     GRPC_HOST, GRPC_PORT, HEARTBEAT_TIMEOUT,
-    QUEUE_VLM_RESULTS, QUEUE_LLM_RESULTS
+    QUEUE_VLM_RESULTS, QUEUE_LLM_RESULTS, QUEUE_AGENT_RESULTS
 )
 from orchestrator.services.node_registry import NodeRegistry
 from orchestrator.services.grpc_server import GRPCServer
@@ -94,7 +94,7 @@ class Orchestrator:
     
     async def _result_queue_poller(self):
         """
-        Poll VLM/LLM result queues for completed tasks.
+        Poll VLM/LLM/Agent result queues for completed tasks.
         Connects RabbitMQ consumer side to pipeline handlers.
         """
         print("[Orchestrator] Starting result queue poller...")
@@ -113,6 +113,21 @@ class Orchestrator:
                     if llm_msg:
                         print(f"[Orchestrator] LLM result received: {llm_msg.task_id}")
                         self.pipeline.on_llm_complete(llm_msg.task_id, llm_msg.json_data)
+                    
+                    # Check Agent results
+                    agent_msg = self.rabbitmq.get_message(QUEUE_AGENT_RESULTS)
+                    if agent_msg:
+                        print(f"[Orchestrator] Agent result received: {agent_msg.task_id}")
+                        # Parse agent result and handle appropriately
+                        try:
+                            import json as json_module
+                            agent_data = json_module.loads(agent_msg.json_data)
+                            if agent_data.get('stage') == 'surface':
+                                self.pipeline.on_agent_surface_complete(agent_msg.task_id, agent_msg.json_data)
+                            elif agent_data.get('stage') == 'research':
+                                self.pipeline.on_agent_research_complete(agent_msg.task_id, agent_msg.json_data)
+                        except Exception as e:
+                            print(f"[Orchestrator] Error parsing agent result: {e}")
                         
                 except Exception as e:
                     print(f"[Orchestrator] Result queue poll error: {e}")
@@ -138,6 +153,14 @@ class Orchestrator:
         
         print(f"[Orchestrator] Crawl task assigned to {node_id}")
         return (True, task_id, [], "")  # Empty URLs = use default sources
+    
+    def queue_research(self, keywords: str):
+        """Queue a research task to CUA node."""
+        success = self.pipeline._fan_out_to_cua(keywords)
+        if success:
+            print(f"[Orchestrator] Research task queued with keywords: '{keywords}'")
+        else:
+            print(f"[Orchestrator] Failed to queue research task")
     
     def start_crawl(self):
         """Start crawling (called manually)."""
@@ -209,10 +232,11 @@ class Orchestrator:
     async def _command_loop(self):
         """Command input loop for manual control."""
         print("=" * 50)
-        print("COMMANDS: 'start' - Begin crawling")
-        print("          'stop'  - Stop crawling")
-        print("          'status'- Show status")
-        print("          'quit'  - Exit")
+        print("COMMANDS: 'start'   - Begin crawling")
+        print("          'stop'    - Stop crawling")
+        print("          'status'  - Show status")
+        print("          'research'- Queue research task to CUA")
+        print("          'quit'    - Exit")
         print("=" * 50)
         
         while self._running:
@@ -230,10 +254,16 @@ class Orchestrator:
                 elif cmd == "status":
                     status = self.get_status()
                     print(f"[Status] Nodes: {status['nodes']}, Crawl Active: {self.crawl_active}")
+                elif cmd == "research":
+                    keywords = input("Enter search keywords: ").strip()
+                    if keywords:
+                        self.queue_research(keywords)
+                    else:
+                        print("[Error] Please provide keywords for research")
                 elif cmd == "quit" or cmd == "exit":
                     break
                 else:
-                    print("[Unknown command. Use: start, stop, status, quit]")
+                    print("[Unknown command. Use: start, stop, status, research, quit]")
                     
             except (EOFError, KeyboardInterrupt):
                 break

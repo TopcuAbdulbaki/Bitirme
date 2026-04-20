@@ -15,6 +15,18 @@ services:
     networks:
       - bitirme-net
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    networks:
+      - bitirme-net
+
   crawler:
     build:
       context: .
@@ -86,6 +98,44 @@ services:
   #     - ORCHESTRATOR_HOST=orchestrator
   #   networks:
   #     - bitirme-net
+
+  cua:
+    build:
+      context: .
+      dockerfile: cua/Dockerfile
+    container_name: cua-node
+    depends_on:
+      - orchestrator
+      - rabbitmq
+    environment:
+      - ORCHESTRATOR_HOST=orchestrator
+      - ORCHESTRATOR_PORT=50051
+      - CUA_GRPC_PORT=50054
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
+      - MODEL_MODE=local
+      - LMSTUDIO_URL=http://172.17.0.1:8000/v1  # Vast.ai host makinesindeki vLLM'e bağlanır
+      - BROWSER_HEADLESS=true
+    shm_size: '2gb'  # KRİTİK: Playwright'ın Docker içinde RAM taşmasından çökmemesi için
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - bitirme-net
+    ports:
+      - "50054:50054"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; grpc.aio.insecure_channel('localhost:50054')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 networks:
   bitirme-net:

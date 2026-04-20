@@ -47,11 +47,21 @@ The text analysis and reasoning engine.
 *   `prompts/`: Managed templates for various tasks (summary, sentiment, etc.).
 *   **Key Function**: Synthesizes crawler text and VLM results into a final report.
 
-### 6. 📂 `proto/`
+### 6. 📂 `cua/` (Computer Using Agent)
+The autonomous research and discovery engine.
+*   `main.py`: Node entry point for gRPC registration and RabbitMQ task consumption.
+*   `config.py`: Environment configuration (Orchestrator, RabbitMQ, LLM settings).
+*   `services/`: gRPC client and RabbitMQ consumer implementations.
+*   `agent/`: LangGraph agent core (state, graph, tools, model handler).
+*   `requirements.txt`: Dependencies (langchain, langgraph, browser-use, playwright, torch).
+*   `Dockerfile`: Multi-stage build (Chromium + CUDA).
+*   **Key Function**: Discovers news via search engines and conducts deep research investigations.
+
+### 7. 📂 `proto/`
 The single source of truth for communication.
 *   `orchestrator.proto`: Defines all RPC methods and message types used across the entire system.
 
-### 7. 📂 `docs/`
+### 8. 📂 `docs/`
 Extensive technical documentation:
 *   `deployment_commands.md`: Full setup instructions for Vast.ai/Linux.
 *   `database_schema.md`: Details the PostgreSQL tables and MinIO structure.

@@ -97,6 +97,13 @@ Sistem 5 ana servisten oluşur. Bütün servislerin kendi Dockerfile, requiremen
 - `llm/handoff_llm.md`
 - `docs/system_prompts.md` (LLM JSON Çıktı Promptu)
 
+### 3.6 🤖 CUA (Computer Using Agent) (`/cua`)
+- **Görevi:** Stokastik (olasılıksal) bir "Avcı" ajanı. Statik Crawler'ın kaçırdığı haberleri bulmak ve derin araştırmalar yapmak.
+- **Detay:** Dual-mode çalışır — (1) Yüzeysel Tarama (Surface Search) hızlı haber bulma, (2) Derin İstihbarat Araştırması (Deep Research) çok kaynaklı sentez. LangGraph + Browser-Use ile tarayıcı gibi gezinir, Google/DuckDuckGo arar, sayfaları parse eder.
+- **Kritik:** Crawler ile paralel fan-out çalışır (`agent_tasks` RabbitMQ kuyruğu). Verileri mevcut pipeline'a (VLM→LLM→DB) uyumlu JSON formatında aktarır. Mod 2'de araştırma raporlarını `research_missions` tablosuna yazar.
+
+📚 **Daha Fazla Detay İçin Okuyunuz:** `cua/handoff_cua.md`
+
 ---
 
 ## 4. 📄 Standart Veri Değişim Formatları (JSON Schemas)

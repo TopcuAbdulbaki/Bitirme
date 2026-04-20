@@ -1,0 +1,43 @@
+"""CUA Node Configuration — tüm env var'lar ve sabitler."""
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ── Orchestrator ────────────────────────────────────────────────────────────
+ORCHESTRATOR_HOST = os.getenv("ORCHESTRATOR_HOST", "localhost")
+ORCHESTRATOR_PORT = int(os.getenv("ORCHESTRATOR_PORT", "50051"))
+CUA_GRPC_PORT     = int(os.getenv("CUA_GRPC_PORT", "50054"))
+
+# ── RabbitMQ ────────────────────────────────────────────────────────────────
+RABBITMQ_HOST     = os.getenv("RABBITMQ_HOST", "localhost")
+RABBITMQ_PORT     = int(os.getenv("RABBITMQ_PORT", "5672"))
+RABBITMQ_USER     = os.getenv("RABBITMQ_USER", "guest")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "guest")
+QUEUE_AGENT_TASKS   = "agent_tasks"
+QUEUE_AGENT_RESULTS = "agent_results"
+
+# ── LLM Ayarları ────────────────────────────────────────────────────────────
+# MODEL_MODE = "local"       → LM Studio (OpenAI-compat endpoint)
+# MODEL_MODE = "production"  → Qwen3.5-9B via transformers + bitsandbytes
+MODEL_MODE  = os.getenv("MODEL_MODE", "local")
+MODEL_NAME  = os.getenv("MODEL_NAME", "Qwen/Qwen3.5-9B-Instruct")
+
+# LM Studio default endpoint (docker: host.docker.internal)
+LMSTUDIO_URL = os.getenv("LMSTUDIO_URL", "http://localhost:1234/v1")
+
+# ── Browser Ayarları ────────────────────────────────────────────────────────
+# "google" veya "duckduckgo"
+DEFAULT_SEARCH_ENGINE = os.getenv("SEARCH_ENGINE", "google")
+
+# Headless mod (prod=True, debug=False)
+BROWSER_HEADLESS  = os.getenv("BROWSER_HEADLESS", "true").lower() == "true"
+
+# ── Agent Parametreleri ─────────────────────────────────────────────────────
+MAX_ARTICLES_DEFAULT         = int(os.getenv("MAX_ARTICLES", "10"))
+MAX_SEARCHES_DEFAULT         = int(os.getenv("MAX_SEARCHES", "5"))
+RESEARCH_CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.80"))
+MAX_RESEARCH_CYCLES          = int(os.getenv("MAX_RESEARCH_CYCLES", "15"))
+
+# Arama döngüleri arası bekleme (saniye) — Google rate limit koruması
+SEARCH_DELAY_SECONDS = float(os.getenv("SEARCH_DELAY", "1.5"))

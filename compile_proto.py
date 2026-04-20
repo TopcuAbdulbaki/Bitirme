@@ -7,7 +7,7 @@ import subprocess
 import shutil
 
 # Nodes that need proto files
-NODES = ['orchestrator', 'crawler', 'db', 'vlm', 'llm']
+NODES = ['orchestrator', 'crawler', 'db', 'vlm', 'llm', 'cua']
 
 # Project root
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -46,13 +46,13 @@ def compile_for_node(node_name: str):
     result = subprocess.run(cmd, capture_output=True, text=True)
     
     if result.returncode == 0:
-        print(f"  ✅ Compiled proto for {node_name}")
+        print(f"  [OK] Compiled proto for {node_name}")
         
         # Fix imports in generated files (grpc_tools generates absolute imports)
         fix_imports(generated_dir)
         return True
     else:
-        print(f"  ❌ Failed to compile for {node_name}: {result.stderr}")
+        print(f"  [ERROR] Failed to compile for {node_name}: {result.stderr}")
         return False
 
 

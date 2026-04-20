@@ -15,6 +15,7 @@ class NodeType(Enum):
     DB = "db"
     VLM = "vlm"
     LLM = "llm"
+    CUA = "cua"
 
 
 class NodeStatus(Enum):

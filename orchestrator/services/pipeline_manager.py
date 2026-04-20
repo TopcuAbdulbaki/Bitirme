@@ -22,6 +22,9 @@ class PipelineStage(Enum):
     VLM_ANALYZING = "vlm_analyzing"
     VLM_COMPLETE = "vlm_complete"
     LLM_ANALYZING = "llm_analyzing"
+    AGENT_SURFACE = "agent_surface"
+    AGENT_RESEARCH = "agent_research"
+    AGENT_COMPLETE = "agent_complete"
     COMPLETE = "complete"
     FAILED = "failed"
 
@@ -171,6 +174,67 @@ class PipelineManager:
                     print(f"[Pipeline] {task_id} -> Published to DB queue")
             except Exception as e:
                 print(f"[Pipeline] Error publishing to DB queue: {e}")
+    
+    def _fan_out_to_cua(self, keywords: str) -> bool:
+        """
+        Check for idle CUA node and publish agent task.
+        
+        Args:
+            keywords: Search keywords for agent research
+        
+        Returns:
+            True if task was published, False otherwise
+        """
+        # Find idle CUA node
+        node = self.registry.get_idle_node(NodeType.CUA)
+        if not node:
+            print("[Pipeline] No idle CUA node available for agent tasks")
+            return False
+        
+        print(f"[Pipeline] Found idle CUA node: {node.node_id} at {node.host}:{node.port}")
+        
+        # Create agent task
+        task_id = self.generate_task_id()
+        task_data = json.dumps({
+            'task_id': task_id,
+            'keywords': keywords,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+        
+        # Publish to agent_tasks queue
+        if self.rabbitmq:
+            success = self.rabbitmq.publish_agent_task(task_id, task_data)
+            if success:
+                print(f"[Pipeline] {task_id} -> Published to agent_tasks queue")
+                # Mark node as busy
+                self.registry.set_node_busy(node.node_id, task_id)
+                return True
+            else:
+                print(f"[Pipeline] Failed to publish {task_id} to agent_tasks queue")
+                return False
+        else:
+            print("[Pipeline] RabbitMQ not available, cannot publish to agent_tasks")
+            return False
+    
+    def on_agent_surface_complete(self, task_id: str, surface_data: str):
+        """Handle agent surface research completion."""
+        task = self._tasks.get(task_id)
+        if not task:
+            print(f"[Pipeline] Unknown task: {task_id}")
+            return
+        
+        task.stage = PipelineStage.AGENT_SURFACE
+        print(f"[Pipeline] {task_id} -> AGENT_SURFACE")
+    
+    def on_agent_research_complete(self, task_id: str, research_data: str):
+        """Handle agent research completion."""
+        task = self._tasks.get(task_id)
+        if not task:
+            print(f"[Pipeline] Unknown task: {task_id}")
+            return
+        
+        task.stage = PipelineStage.AGENT_RESEARCH
+        print(f"[Pipeline] {task_id} -> AGENT_RESEARCH")
     
     def on_task_failed(self, task_id: str, error: str):
         """Handle task failure."""

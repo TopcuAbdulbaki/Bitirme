@@ -130,6 +130,12 @@ class PostgresManager:
                 CREATE INDEX IF NOT EXISTS idx_news_llm ON news(llm_processed);
             """)
             
+            # Add CUA-related columns to news table
+            await conn.execute("""
+                ALTER TABLE news ADD COLUMN IF NOT EXISTS source_type VARCHAR(20) DEFAULT 'crawler';
+                ALTER TABLE news ADD COLUMN IF NOT EXISTS mission_id VARCHAR(64);
+            """)
+            
             # VLM analysis table
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS vlm_analysis (
@@ -159,6 +165,24 @@ class PostgresManager:
                     relevance_to_topic VARCHAR(20),
                     analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+            """)
+            
+            # Research missions table (CUA)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS research_missions (
+                    mission_id VARCHAR(64) PRIMARY KEY,
+                    topic TEXT NOT NULL,
+                    status VARCHAR(20) DEFAULT 'in_progress',
+                    final_report_json JSONB,
+                    graph_state_json JSONB,
+                    findings_count INTEGER DEFAULT 0,
+                    confidence_score FLOAT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_research_status ON research_missions(status);
+                CREATE INDEX IF NOT EXISTS idx_news_mission ON news(mission_id);
             """)
             
             print("[PostgreSQL] Tables initialized")
@@ -398,6 +422,65 @@ class PostgresManager:
                 'embedding_coverage': f"{(with_embedding/total*100):.1f}%" if total > 0 else "0%"
             }
     
+    async def insert_research_mission(self, mission_data: dict) -> str:
+        """
+        Create a new research mission record.
+        
+        Args:
+            mission_data: Dictionary containing mission details
+                - topic (str): Research topic
+                - status (str, optional): Mission status (default: 'in_progress')
+                - mission_id (str, optional): Mission ID (generated if not provided)
+                
+        Returns:
+            mission_id: The ID of the created research mission
+        """
+        mission_id = mission_data.get('mission_id') or hashlib.sha256(
+            mission_data.get('topic', '').encode()
+        ).hexdigest()[:16]
+        
+        async with self._pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO research_missions (
+                    mission_id, topic, status
+                ) VALUES ($1, $2, $3)
+            """,
+                mission_id,
+                mission_data.get('topic'),
+                mission_data.get('status', 'in_progress')
+            )
+            
+            print(f"[PostgreSQL] Research mission created: {mission_id}")
+            return mission_id
+    
+    async def complete_research_mission(self, mission_id: str, report: dict, state: dict):
+        """
+        Finalize a research mission with report and graph state.
+        
+        Args:
+            mission_id: The mission ID to complete
+            report: Final research report as dictionary
+            state: Final graph state as dictionary
+        """
+        async with self._pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE research_missions
+                SET 
+                    final_report_json = $1,
+                    graph_state_json = $2,
+                    completed_at = CURRENT_TIMESTAMP,
+                    status = 'completed',
+                    findings_count = COALESCE($3, findings_count)
+                WHERE mission_id = $4
+            """,
+                json.dumps(report),
+                json.dumps(state),
+                len(report.get('findings', [])) if isinstance(report.get('findings'), list) else None,
+                mission_id
+            )
+            
+            print(f"[PostgreSQL] Research mission completed: {mission_id}")
+
     async def close(self):
         """Close connection pool."""
         if self._pool:
