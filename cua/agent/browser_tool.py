@@ -100,25 +100,20 @@ class BrowserTool:
     async def search_google(
         self, query: str, num_results: int = 8
     ) -> List[Dict[str, str]]:
-        print(f"[BrowserTool] Google: {query}")
-        task = (
-            f"Search for: {query}\n"
-            f"You can use google.com or any alternative search engine if blocked.\n"
-            f"Collect the first {num_results} organic result links.\n"
-            f"Skip ads and internal domain links.\n"
-            f"Return ONLY a JSON array like: "
-            f'[{{"title":"...","url":"...","snippet":"..."}}]'
-        )
-        return await self._run_search(task, query)
+        """Google yerine DDG'den başla — CAPTCHA riski yok."""
+        print(f"[BrowserTool] Search (DDG): {query}")
+        return await self.search_duckduckgo(query, num_results)
 
     async def search_duckduckgo(
         self, query: str, num_results: int = 8
     ) -> List[Dict[str, str]]:
         print(f"[BrowserTool] DuckDuckGo: {query}")
         task = (
-            f"Go to duckduckgo.com and search for: {query}\n"
-            f"Collect the first {num_results} result links.\n"
-            f"Return ONLY a JSON array like: "
+            f'Navigate directly to https://duckduckgo.com/?q={query.replace(" ", "+")} '
+            f"and wait for the search results page to load.\n"
+            f"DO NOT go to Google, Bing or any other search engine.\n"
+            f"Collect the first {num_results} organic result links (skip ads).\n"
+            f"Return ONLY a JSON array: "
             f'[{{"title":"...","url":"...","snippet":"..."}}]'
         )
         return await self._run_search(task, query)

@@ -23,12 +23,12 @@ QUEUE_AGENT_RESULTS = "agent_results"
 MODEL_MODE  = os.getenv("MODEL_MODE", "local")
 MODEL_NAME  = os.getenv("MODEL_NAME", "Qwen/Qwen3.5-9B-Instruct")
 
-# LM Studio default endpoint (docker: host.docker.internal)
-LMSTUDIO_URL = os.getenv("LMSTUDIO_URL", "http://localhost:1234/v1")
+# LM Studio / vLLM endpoint (Vast.ai'da: http://localhost:8000/v1)
+LMSTUDIO_URL = os.getenv("LMSTUDIO_URL", "http://localhost:8000/v1")
 
 # ── Browser Ayarları ────────────────────────────────────────────────────────
-# "google" veya "duckduckgo"
-DEFAULT_SEARCH_ENGINE = os.getenv("SEARCH_ENGINE", "google")
+# "duckduckgo" | "bing" | "google"  — DDG varsayılan, CAPTCHA yok
+DEFAULT_SEARCH_ENGINE = os.getenv("SEARCH_ENGINE", "duckduckgo")
 
 # Headless mod (prod=True, debug=False)
 BROWSER_HEADLESS  = os.getenv("BROWSER_HEADLESS", "true").lower() == "true"
