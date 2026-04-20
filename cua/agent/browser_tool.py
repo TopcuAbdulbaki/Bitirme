@@ -147,22 +147,40 @@ class BrowserTool:
             return []
 
     def _parse_search_results(self, raw: str) -> List[Dict[str, str]]:
-        match = re.search(r"\[[\s\S]*?\]", raw)
+        # En dıştaki [ ] bloğunu bulmaya çalış
+        match = re.search(r"\[\s*\{[\s\S]*\}\s*\]", raw)
+        if not match:
+            # Belki sadece { } dönmüştür, listeye saralım
+            match = re.search(r"\{[\s\S]*\}", raw)
+        
         if match:
+            clean_json = match.group()
+            # Bazen Türkçe karakterler _ olmuşsa JSON'ı bozabiliyor, düzelterek dene
             try:
-                items = json.loads(match.group())
-                return [
-                    {
-                        "title":   i.get("title", ""),
-                        "url":     i.get("url", ""),
-                        "snippet": i.get("snippet", i.get("description", "")),
-                    }
-                    for i in items if isinstance(i, dict) and i.get("url")
-                ]
+                items = json.loads(clean_json)
+                if isinstance(items, dict): items = [items]
+                return self._process_items(items)
             except json.JSONDecodeError:
-                pass
-        print(f"[BrowserTool] Sonuç parse hatası: {raw[:200]}")
+                # Son bir çaba: tırnak içindeki bozuklukları temizlemeyi dene
+                try:
+                    # Sadece yapısal olmayan alt çizgileri temizlemeyi dene (şüpheli bir işlem ama denemeye değer)
+                    items = json.loads(clean_json.replace('"_', '"')) 
+                    if isinstance(items, dict): items = [items]
+                    return self._process_items(items)
+                except: pass
+                
+        print(f"[BrowserTool] Sonuç parse hatası (Raw: {raw[:150]}...)")
         return []
+
+    def _process_items(self, items: List[Any]) -> List[Dict[str, str]]:
+        return [
+            {
+                "title":   str(i.get("title", "")).replace("_", ""),
+                "url":     str(i.get("url", "")),
+                "snippet": str(i.get("snippet", i.get("description", ""))).replace("_", ""),
+            }
+            for i in items if isinstance(i, dict) and i.get("url")
+        ]
 
     # ------------------------------------------------------------------
     # Sayfa içeriği
