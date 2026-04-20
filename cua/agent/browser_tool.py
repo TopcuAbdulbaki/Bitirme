@@ -108,13 +108,14 @@ class BrowserTool:
         self, query: str, num_results: int = 8
     ) -> List[Dict[str, str]]:
         print(f"[BrowserTool] DuckDuckGo: {query}")
+        encoded = query.replace(" ", "+")
         task = (
-            f'Navigate directly to https://duckduckgo.com/?q={query.replace(" ", "+")} '
+            f"Navigate directly to https://duckduckgo.com/?q={encoded} "
             f"and wait for the search results page to load.\n"
             f"DO NOT go to Google, Bing or any other search engine.\n"
-            f"Collect the first {num_results} organic result links (skip ads).\n"
-            f"Return ONLY a JSON array: "
-            f'[{{"title":"...","url":"...","snippet":"..."}}]'
+            f"Collect the first {num_results} organic result links (skip ads and DDG internal links).\n"
+            f"IMPORTANT: You MUST return ONLY a valid JSON array, nothing else:\n"
+            f'[{{"title":"...","url":"https://...","snippet":"..."}}]'
         )
         return await self._run_search(task, query)
 
@@ -142,40 +143,61 @@ class BrowserTool:
             return []
 
     def _parse_search_results(self, raw: str) -> List[Dict[str, str]]:
-        # En dıştaki [ ] bloğunu bulmaya çalış
-        match = re.search(r"\[\s*\{[\s\S]*\}\s*\]", raw)
-        if not match:
-            # Belki sadece { } dönmüştür, listeye saralım
-            match = re.search(r"\{[\s\S]*\}", raw)
-        
+        """JSON veya numaralı liste formatını parse eder."""
+        # --- 1. Deneme: JSON array ---
+        match = re.search(r"\[\s*\{[\s\S]*?\}\s*\]", raw)
         if match:
-            clean_json = match.group()
-            # Bazen Türkçe karakterler _ olmuşsa JSON'ı bozabiliyor, düzelterek dene
             try:
-                items = json.loads(clean_json)
-                if isinstance(items, dict): items = [items]
-                return self._process_items(items)
-            except json.JSONDecodeError:
-                # Son bir çaba: tırnak içindeki bozuklukları temizlemeyi dene
-                try:
-                    # Sadece yapısal olmayan alt çizgileri temizlemeyi dene (şüpheli bir işlem ama denemeye değer)
-                    items = json.loads(clean_json.replace('"_', '"')) 
-                    if isinstance(items, dict): items = [items]
+                items = json.loads(match.group())
+                if isinstance(items, list):
                     return self._process_items(items)
-                except: pass
-                
+            except json.JSONDecodeError:
+                pass
+
+        # --- 2. Deneme: Tek JSON objesi ---
+        match = re.search(r"\{[\s\S]*?\}", raw)
+        if match:
+            try:
+                item = json.loads(match.group())
+                return self._process_items([item])
+            except json.JSONDecodeError:
+                pass
+
+        # --- 3. Deneme: Numaralı liste ("1. Title: ...\n   URL: ...\n   Snippet: ...") ---
+        items = []
+        blocks = re.split(r"\n?\d+\.\s+", raw)
+        for block in blocks[1:]:  # ilk boş bloğu atla
+            title_m   = re.search(r"Title:\s*(.+)", block)
+            url_m     = re.search(r"URL:\s*(https?://\S+)", block)
+            snippet_m = re.search(r"Snippet:\s*(.+)", block, re.DOTALL)
+            if url_m:
+                items.append({
+                    "title":   (title_m.group(1).strip()   if title_m   else ""),
+                    "url":     url_m.group(1).strip(),
+                    "snippet": (snippet_m.group(1).strip() if snippet_m else "")[:300],
+                })
+        if items:
+            return self._process_items(items)
+
         print(f"[BrowserTool] Sonuç parse hatası (Raw: {raw[:150]}...)")
         return []
 
     def _process_items(self, items: List[Any]) -> List[Dict[str, str]]:
-        return [
-            {
-                "title":   str(i.get("title", "")).replace("_", ""),
-                "url":     str(i.get("url", "")),
-                "snippet": str(i.get("snippet", i.get("description", ""))).replace("_", ""),
-            }
-            for i in items if isinstance(i, dict) and i.get("url")
-        ]
+        result = []
+        for i in items:
+            if not isinstance(i, dict):
+                continue
+            url = str(i.get("url", "")).strip()
+            # Hallucinated / çok uzun URL'leri filtrele
+            if not url.startswith("http") or len(url) > 300:
+                continue
+            result.append({
+                "title":   str(i.get("title",   ""))[:200],
+                "url":     url,
+                "snippet": str(i.get("snippet", i.get("description", "")))[:400],
+            })
+        return result
+
 
     # ------------------------------------------------------------------
     # Sayfa içeriği
