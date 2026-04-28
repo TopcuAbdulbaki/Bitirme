@@ -43,9 +43,9 @@ def parse_args():
                    help="Maksimum döngü sayısı")
     p.add_argument("--headless",     default="true",
                    help="true/false — tarayıcı görünür olsun mu?")
-    p.add_argument("--engine",       default="google",
-                   choices=["google", "duckduckgo"],
-                   help="Arama motoru")
+    p.add_argument("--engine",       default="duckduckgo",
+                   choices=["google", "duckduckgo", "bing"],
+                   help="Arama motoru (duckduckgo önerilen, CAPTCHA yok)")
     p.add_argument("--model-mode",   default="local",
                    choices=["local", "production"],
                    help="local = LM Studio, production = Qwen transformers")

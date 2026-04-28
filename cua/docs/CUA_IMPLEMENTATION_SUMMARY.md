@@ -1,7 +1,7 @@
 # CUA (Computer Using Agent) Integration - Implementation Complete ✅
 
 **Implementation Date:** 2026-Q1  
-**Status:** All 5 Phases Complete | Ready for Testing  
+**Status:** Phases 1–5 Complete | Phase 6 (Runtime Bugfixes) Applied  
 **Total Files Modified:** 10 | **Total Files Created:** 20+
 
 ---
@@ -171,8 +171,9 @@ Output format matches existing Crawler JSON:
 | `cua/agent/prompts.py` | System prompts | 6 prompts (surface/research × plan/evaluate/synthesize) |
 
 **LLM Modes:**
-- **Local:** LM Studio OpenAI-compatible API (http://localhost:1234/v1)
-- **Production:** Qwen3.5-9B quantized (8-bit) with torch
+- **Local (geliştirme):** LM Studio OpenAI-compatible API (`http://localhost:1234/v1`)
+- **Production (Vast.ai):** vLLM endpoint (`http://localhost:8000/v1`) — `LMSTUDIO_URL` env var ile override edilir
+- **Donanım:** Qwen3.5-9B tabanlı model
 
 **Tools for LangGraph:**
 ```python
@@ -445,20 +446,36 @@ surface search "technology news"
 ## ⚠️ Known Limitations & Future Work
 
 ### Current Limitations:
-1. **Browser-Use Implementation:** Stub methods only - real Playwright/Browser-Use integration for Phase 6
-2. **LLM Integration:** Stub LLM calls - requires actual model deployment (LM Studio or cloud-based)
-3. **Captcha Handling:** Vision-based captcha solving logic stubbed - requires vision model
-4. **Rate Limiting:** No built-in rate limiting or politeness delays for search engines
-5. **Memory Management:** No disk-based state persistence for long research sessions
+1. ~~**Browser-Use Implementation:** Stub methods only~~ — **GERÇEK implementasyon tamamlandı** (`BrowserConfig` + `browser-use Agent`)
+2. **LLM Integration:** Qwen3.5-9B, vLLM üzerinden çalışıyor (Vast.ai üretim ortamı)
+3. **Captcha Handling:** Vision-based captcha çözme agent'a devrediliyor (stub yok, fallback var)
+4. ~~**Rate Limiting:** No built-in rate limiting~~ — **`SEARCH_DELAY_SECONDS` ile uygulandı** (`cua/config.py`)
+5. **Memory Management:** Uzun araştırma oturumları için disk tabanlı state kalıcılığı yok
 
 ### Recommended Next Steps:
-1. Deploy LM Studio or Qwen3.5-9B model
-2. Test Browser-Use with real Playwright commands
+1. ✅ ~~Deploy LM Studio or Qwen3.5-9B model~~ — Vast.ai vLLM üzerinde çalışıyor
+2. ✅ ~~Test Browser-Use with real Playwright commands~~ — `BrowserConfig` ile gerçek entegrasyon
 3. Integrate VLM for captcha detection and solution
-4. Add search engine rate limiting (exponential backoff)
+4. ✅ ~~Add search engine rate limiting~~ — `SEARCH_DELAY_SECONDS` ile uygulandı
 5. Implement state persistence for multi-day research tasks
 6. Add monitoring/alerting for agent failures
 7. Create comprehensive test suite with mock search results
+
+---
+
+## 🔧 Phase 6: Runtime Bugfixes (2026-Q2)
+
+**Tarih:** 2026-04-24  
+**Kapsam:** Vast.ai production ortamında tespit edilen browser-use API uyumsuzlukları ve encoding sorunları
+
+| # | Dosya | Sorun | Çözüm |
+|---|-------|-------|-------|
+| 1 | `browser_tool.py` | `Browser(headless=..., channel=...)` — API desteklenmiyor → `CDP not initialized` | `BrowserConfig` objesi ile doğru init |
+| 2 | `browser_tool.py` | `Agent(llm_timeout=..., step_timeout=...)` — 0.11.x'te parametre yok → crash | Desteklenmeyen parametreler kaldırıldı |
+| 3 | `browser_tool.py` | DDG 0 sonuç döndürdüğünde sistem dururdu | DDG → Bing otomatik fallback eklendi |
+| 4 | `browser_tool.py` | Qwen tokenizer `T_rkiye`, `b_y_me` encoding bozulmaları | `_sanitize_encoding()` + gelişmiş JSON regex |
+| 5 | `browser_tool.py` | Regex `[\s\S]*?` (non-greedy) büyük JSON array'leri kırpıyordu | Greedy `[\s\S]*` kullanımına geçildi |
+| 6 | `test_local.py` | `--engine bing` argparse'ta tanımsızdı | `bing` seçeneği eklendi, default `duckduckgo` yapıldı |
 
 ---
 
@@ -493,5 +510,5 @@ surface search "technology news"
 ---
 
 *Generated: CUA Integration Implementation Manager*  
-*Last Updated: 2026-Q1*  
-*Version: 1.0 (Complete)*
+*Last Updated: 2026-Q2 (Phase 6 Runtime Bugfixes)*  
+*Version: 1.1 (Production Stable)*

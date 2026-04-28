@@ -1,5 +1,6 @@
 """RabbitMQ consumer for CUA task and result messages."""
 import json
+import time
 import pika
 from dataclasses import dataclass
 from typing import Optional
@@ -19,24 +20,32 @@ class RabbitMQConsumer:
         self.channel = None
         self.connect()
 
-    def connect(self):
-        """Establish RabbitMQ connection."""
-        try:
-            credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-            self.connection = pika.BlockingConnection(
-                pika.ConnectionParameters(
-                    host=RABBITMQ_HOST,
-                    port=RABBITMQ_PORT,
-                    credentials=credentials
+    def connect(self, max_retries: int = 3, base_delay: int = 3):
+        """Establish RabbitMQ connection with linear backoff retry."""
+        for attempt in range(1, max_retries + 1):
+            try:
+                credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
+                self.connection = pika.BlockingConnection(
+                    pika.ConnectionParameters(
+                        host=RABBITMQ_HOST,
+                        port=RABBITMQ_PORT,
+                        credentials=credentials,
+                        connection_attempts=1,
+                        retry_delay=0,
+                    )
                 )
-            )
-            self.channel = self.connection.channel()
-            self.channel.queue_declare(queue=QUEUE_AGENT_TASKS, durable=True)
-            self.channel.queue_declare(queue=QUEUE_AGENT_RESULTS, durable=True)
-            print("[CUA] Connected to RabbitMQ")
-        except Exception as e:
-            print(f"[CUA] RabbitMQ connection failed: {e}")
-            raise
+                self.channel = self.connection.channel()
+                self.channel.queue_declare(queue=QUEUE_AGENT_TASKS, durable=True)
+                self.channel.queue_declare(queue=QUEUE_AGENT_RESULTS, durable=True)
+                print("[CUA] Connected to RabbitMQ")
+                return
+            except Exception as e:
+                if attempt == max_retries:
+                    print(f"[CUA] RabbitMQ bağlantısı {max_retries} denemede başarısız: {e}")
+                    raise
+                wait = base_delay * attempt  # 3, 6, 9 saniye
+                print(f"[CUA] RabbitMQ bağlanamıyor ({attempt}/{max_retries}), {wait}s bekle: {e}")
+                time.sleep(wait)
 
     def get_message(self, queue_name: str) -> Optional[QueueMessage]:
         """Get a message from queue (non-blocking)."""

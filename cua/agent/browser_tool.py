@@ -13,14 +13,14 @@ from cua.config import DEFAULT_SEARCH_ENGINE, LMSTUDIO_URL
 
 
 def _build_default_llm():
-    """browser-use'un native ChatOpenAI ile LM Studio bağlantısı."""
+    """browser-use'un native ChatOpenAI ile LM Studio / vLLM bağlantısı."""
     from browser_use.llm.openai.chat import ChatOpenAI
     return ChatOpenAI(
         model="local-model",
         base_url=LMSTUDIO_URL,
         api_key="lm-studio",
         temperature=0.2,
-        timeout=200.0,        # <-- Timeout süresini 75'ten 200 saniyeye çıkardık (Local model gecikmeleri için)
+        timeout=200.0,
         max_retries=2
     )
 
@@ -47,16 +47,22 @@ class BrowserTool:
         """browser-use'un import edilebilir olduğunu doğrula."""
         try:
             from browser_use import Agent, Browser
+            from browser_use.browser.browser import BrowserConfig
             if self._llm is None:
                 self._llm = _build_default_llm()
-            # Browser parametreleri
-            self._browser = Browser(
+            # BrowserConfig ile doğru init (browser-use 0.11+)
+            config = BrowserConfig(
                 headless=self.headless,
-                channel="chrome",
-                args=["--start-maximized"] if not self.headless else []
+                disable_security=True,
+                extra_chromium_args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-setuid-sandbox",
+                ] + (["--start-maximized"] if not self.headless else []),
             )
+            self._browser = Browser(config=config)
             self._initialized = True
-            print(f"[BrowserTool] browser-use hazır (v0.12.x) - Chrome Motoru (Headless: {self.headless})")
+            print(f"[BrowserTool] browser-use hazır - BrowserConfig (Headless: {self.headless})")
         except ImportError as e:
             raise RuntimeError(
                 f"browser-use yüklü değil veya import hatası: {e}\n"
@@ -73,13 +79,12 @@ class BrowserTool:
     def _agent(self, task: str, max_steps: int = 15):
         """Verilen task için browser-use Agent döndürür."""
         from browser_use import Agent
+        # llm_timeout / step_timeout browser-use 0.11.x'te desteklenmez
         return Agent(
             task=task,
             llm=self._llm,
             browser=self._browser,
             max_steps=max_steps,
-            llm_timeout=600,
-            step_timeout=600,  # <-- 300'den 600 saniyeye (10 dakika) çıkardık
         )
 
     # ------------------------------------------------------------------
@@ -89,13 +94,17 @@ class BrowserTool:
     async def search(
         self, query: str, num_results: int = 8, engine: str = None
     ) -> List[Dict[str, str]]:
-        """Arama yap, sonuçları döndür."""
+        """Arama yap, sonuçları döndür. 0 sonuç gelirse Bing'e fallback yapar."""
         engine = engine or DEFAULT_SEARCH_ENGINE
-        if engine == "duckduckgo":
-            return await self.search_duckduckgo(query, num_results)
         if engine == "bing":
             return await self.search_bing(query, num_results)
-        return await self.search_google(query, num_results)
+        # DDG önce dene (CAPTCHA yok)
+        results = await self.search_duckduckgo(query, num_results)
+        if results:
+            return results
+        # DDG 0 sonuç → Bing fallback
+        print(f"[BrowserTool] DDG 0 sonuç, Bing'e geçiliyor: {query}")
+        return await self.search_bing(query, num_results)
 
     async def search_google(
         self, query: str, num_results: int = 8
@@ -133,37 +142,68 @@ class BrowserTool:
 
     async def _run_search(self, task: str, query: str) -> List[Dict[str, str]]:
         try:
-            # 10 adımda sonuç bulamazsa çok dağılmasın
-            agent  = self._agent(task, max_steps=10)
+            agent  = self._agent(task, max_steps=12)
             result = await agent.run()
             raw    = result.final_result() or ""
-            return self._parse_search_results(raw)
+            cleaned = self._sanitize_encoding(raw)
+            return self._parse_search_results(cleaned)
         except Exception as e:
             print(f"[BrowserTool] Arama hatası ({query}): {e}")
             return []
 
+    def _sanitize_encoding(self, text: str) -> str:
+        """
+        vLLM / Qwen tokenizer kaynaklı encoding bozulmalarını temizler.
+        Örnek: T_rkiye → Türkiye, b_y_me → büyüme
+        Strateji: escape sequence'leri decode etmeyi dene, çözemezsen olduğu gibi bırak.
+        """
+        if not text:
+            return text
+        # \n kaçışlarını gerçek newline'a çevir (bazen model escape eder)
+        try:
+            text = text.encode('utf-8').decode('unicode_escape')
+        except Exception:
+            pass
+        # Bozuk JSON escape'leri düzelt (\' → ')
+        text = text.replace("\\'", "'").replace("\\\\", "\\")
+        return text
+
     def _parse_search_results(self, raw: str) -> List[Dict[str, str]]:
         """JSON veya numaralı liste formatını parse eder."""
-        # --- 1. Deneme: JSON array ---
-        match = re.search(r"\[\s*\{[\s\S]*?\}\s*\]", raw)
+        # --- 1. Deneme: JSON array (greedy — tüm array'i yakala) ---
+        match = re.search(r"\[\s*\{[\s\S]*\}\s*\]", raw)
         if match:
             try:
                 items = json.loads(match.group())
-                if isinstance(items, list):
+                if isinstance(items, list) and items:
                     return self._process_items(items)
             except json.JSONDecodeError:
                 pass
 
-        # --- 2. Deneme: Tek JSON objesi ---
+        # --- 2. Deneme: \n kaçışlı JSON (agent bazen \n ile kaçırır) ---
+        escaped_match = re.search(r"\\n\[\\n", raw)
+        if escaped_match:
+            try:
+                unescaped = raw.encode('utf-8').decode('unicode_escape')
+                inner = re.search(r"\[\s*\{[\s\S]*\}\s*\]", unescaped)
+                if inner:
+                    items = json.loads(inner.group())
+                    if isinstance(items, list) and items:
+                        return self._process_items(items)
+            except Exception:
+                pass
+
+        # --- 3. Deneme: Tek JSON objesi ---
         match = re.search(r"\{[\s\S]*?\}", raw)
         if match:
             try:
                 item = json.loads(match.group())
-                return self._process_items([item])
+                if "url" in item:
+                    return self._process_items([item])
             except json.JSONDecodeError:
                 pass
 
-        # --- 3. Deneme: Numaralı liste ("1. Title: ...\n   URL: ...\n   Snippet: ...") ---
+        # --- 4. Deneme: Numaralı liste ("1. Title: ...\n   URL: ...\n   Snippet: ...") ---
         items = []
         blocks = re.split(r"\n?\d+\.\s+", raw)
         for block in blocks[1:]:  # ilk boş bloğu atla
@@ -179,7 +219,7 @@ class BrowserTool:
         if items:
             return self._process_items(items)
 
-        print(f"[BrowserTool] Sonuç parse hatası (Raw: {raw[:150]}...)")
+        print(f"[BrowserTool] Sonuç parse hatası (Raw: {raw[:200]}...)")
         return []
 
     def _process_items(self, items: List[Any]) -> List[Dict[str, str]]:

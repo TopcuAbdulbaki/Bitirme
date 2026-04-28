@@ -29,4 +29,5 @@ class AgentState(TypedDict, total=False):
     # Internal agent tracking memory (required for LangGraph state passing)
     _last_action: dict
     _search_results: list
+    _searched_queries: list      # Sorgu çeşitleme koruması: daha önce yapılan aramalar
 

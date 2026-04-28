@@ -15,6 +15,7 @@ Bu doküman, `scripts/` dizini altındaki yardımcı betiklerin (PowerShell scri
 | `3_db.ps1`            | Database, MinIO ve DB servisinin kurulum komutlarını üretir.             |
 | `4_vlm.ps1`           | VLM (Visual Language Model) servisinin kurulum ve güncelleme komutlarını üretir. |
 | `5_llm.ps1`           | LLM (Large Language Model) servisinin kurulum ve güncelleme komutlarını üretir. |
+| `6_cua.ps1`           | CUA (Computer Using Agent) — browser-use + vLLM GPU node kurulumu ve uzak deploy. |
 
 ---
 
@@ -32,8 +33,8 @@ Tüm servislerin `docker run` komutlarını ve gerekli ortam değişkenlerini (E
 - **Ne Yapar?** servislerin hangi IP ve Port ile çalışacağını, ağ yapılandırmalarını (db-net vb.) gösterir.
 - **Önemli:** Hangi servisin hangi opsiyonlarla çalıştığını görmek için ana döküman niteliğindedir.
 
-### 3. Servis Bazlı Scriptler (1-5)
-Her bir servis (`orchestrator`, `crawler`, `db`, `vlm`, `llm`) için özelleşmiş kurulum betikleridir.
+### 3. Servis Bazlı Scriptler (1–6)
+Her bir servis (`orchestrator`, `crawler`, `db`, `vlm`, `llm`, `cua`) için özelleşmiş kurulum betikleridir.
 - **Ortak Özellikler:**
   - `.env` dosyasından veya parametrelerden (`-OrchHost`, `-GrpcPort`) veri alırlar.
   - Uzak sunucuya (Vast.ai) yapıştırılacak **Bash** kod bloklarını üretirler.
@@ -54,6 +55,12 @@ Betikler genellikle şu şekilde çalıştırılır (PowerShell üzerinde):
 
 # GPU Servisleri (VLM / LLM)
 .\4_vlm.ps1 -OrchHost "142.170.xx.xx" -ModelMode "transformers"
+
+# CUA Node — Yerel
+.\6_cua.ps1
+
+# CUA Node — Vast.ai SSH ile uzak deploy
+.\6_cua.ps1 -RemoteHost "192.168.x.x" -RemoteUser root -RemotePort 22 -UseSSH $true
 ```
 
 ---
@@ -75,3 +82,38 @@ Betikler genellikle şu şekilde çalıştırılır (PowerShell üzerinde):
 - **Token Güncelliği:** `GH_TOKEN` (GitHub Personal Access Token) süresi dolduğunda `.env` üzerinden güncellenmelidir.
 - **IP Adresleri:** Vast.ai üzerinde makineler her kiralandığında IP adresleri değişir. Bu yüzden `-OrchHost` parametresi her seferinde yeni Orchestrator IP'sine göre güncellenmelidir.
 - **Port Yönlendirme:** Docker'daki `-p` port eşleştirmelerinin, Vast.ai'nin sağladığı dış portlarla uyumlu olduğundan emin olunmalıdır.
+- **CUA özel:** `6_cua.ps1` içindeki `LMSTUDIO_URL` değeri, Vast.ai vLLM endpoint'ine (`http://localhost:8000/v1`) göre ayarlanmalıdır. `SEARCH_ENGINE` varsayılanı `duckduckgo`'dur.
+
+---
+
+## 🤖 `6_cua.ps1` — CUA Deployment Script
+
+**Amaç:** CUA node'unu Vast.ai GPU instance’ına (veya yerel Docker ortamına) deploy eder.
+
+**Parametreler:**
+
+| Parametre | Varsayılan | Açıklama |
+|-----------|------------|----------|
+| `-RemoteHost` | `localhost` | Hedef sunucu IP'si |
+| `-RemoteUser` | `root` | SSH kullanıcısı |
+| `-RemotePort` | `22` | SSH portu |
+| `-UseSSH` | `$false` | `$true` → uzak deploy, `$false` → yerel |
+| `-WireGuardIP` | `10.0.0.6` | WireGuard VPN IP (opsiyonel) |
+
+**Dahili Değişkenler** (script içinde güncellenebilir):
+```powershell
+$ORCHESTRATOR_HOST = "orchestrator"   # Docker network servis adı
+$ORCHESTRATOR_PORT = 50051
+$CUA_GRPC_PORT    = 50054
+$RABBITMQ_HOST    = "rabbitmq"
+$MODEL_MODE       = "local"           # "local" = vLLM, "production" = transformers
+# LMSTUDIO_URL    = "http://lmstudio:1234/v1"  ← Vast.ai için 8000 olarak güncelle
+```
+
+**Ne Yapar?**
+1. `cua/Dockerfile` kullanarak `abdulbakitopcu/cua:latest` imajını derler
+2. `--gpus all` ile GPU'ya bağlı başlatır, port `50054` dışa açılır
+3. `UseSSH=$true` ise uzak sunucuya SSH üzerinden `docker run` komutunu gönderir
+
+> **⚠️ Not:** `LMSTUDIO_URL` script’teki `http://lmstudio:1234/v1` değerini Vast.ai vLLM için
+> `http://localhost:8000/v1` olarak güncellemeden önce çalıştırmayın!

@@ -137,7 +137,8 @@ async def main():
         loop.create_task(node.shutdown())
 
     signal.signal(signal.SIGINT,  _sig_handler)
-    signal.signal(signal.SIGTERM, _sig_handler)
+    if hasattr(signal, "SIGTERM"):          # Windows'ta SIGTERM yoktur
+        signal.signal(signal.SIGTERM, _sig_handler)
 
     await node.start()
 

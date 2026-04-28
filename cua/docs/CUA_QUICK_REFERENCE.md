@@ -1,8 +1,8 @@
 # CUA Integration - Quick Reference Guide
 
-**Status:** ✅ Implementation Complete  
-**Last Updated:** 2026-Q1  
-**Quick Links:** [Implementation Summary](./CUA_IMPLEMENTATION_SUMMARY.md) | [Delegation Log](./DELEGATION_LOG.md) | [Handoff CUA](./cua/handoff_cua.md)
+**Status:** ✅ Phase 1–6 Complete — Production Stable  
+**Last Updated:** 2026-Q2 (Phase 6 Runtime Bugfixes)  
+**Quick Links:** [Implementation Summary](./CUA_IMPLEMENTATION_SUMMARY.md) | [Delegation Log](./DELEGATION_LOG.md) | [Handoff CUA](../handoff_cua.md)
 
 ---
 
@@ -111,16 +111,17 @@ RABBITMQ_USER=guest
 RABBITMQ_PASSWORD=guest
 
 # LLM Model
-MODEL_MODE=local                     # "local" or "production"
-MODEL_NAME=Qwen/Qwen3.5-9B-Instruct  # For production
-LMSTUDIO_URL=http://localhost:1234/v1  # For local mode
+MODEL_MODE=local                     # "local" veya "production"
+MODEL_NAME=Qwen/Qwen3.5-9B-Instruct  # Production için
+LMSTUDIO_URL=http://localhost:8000/v1  # Vast.ai vLLM endpoint (local dev: 1234)
 
 # Agent Parameters
-MAX_ARTICLES=10                      # Surface mode: articles to find
-MAX_SEARCHES=5                       # Max search iterations
-SEARCH_ENGINE=google                 # "google" or "duckduckgo"
-CONFIDENCE_THRESHOLD=0.80            # Research mode: stop confidence
-MAX_RESEARCH_CYCLES=15               # Max research iterations
+MAX_ARTICLES=10                      # Surface mod: kaç makale bulunacak
+MAX_SEARCHES=5                       # Max arama iterasyonu
+SEARCH_ENGINE=duckduckgo             # "duckduckgo" (önerilen, CAPTCHA yok) | "bing" | "google"
+CONFIDENCE_THRESHOLD=0.80            # Research mod: durma eşiği
+MAX_RESEARCH_CYCLES=15               # Max araştırma döngüsü
+SEARCH_DELAY=1.5                     # Aramalar arası bekleme (saniye)
 ```
 
 ---
@@ -333,31 +334,27 @@ psql -h localhost -U postgres -d bitirme -c "SELECT source_type, COUNT(*) FROM n
 
 ---
 
-## 🎯 Next Steps (Phase 6)
+## 🎯 Phase 6 — Tamamlandı (2026-04-24)
 
-### Priority 1: LLM Integration
-1. Deploy LM Studio or cloud API
-2. Replace `model_handler.py` stubs with real inference
-3. Test plan_next_action with real LLM calls
-4. Implement evaluate_confidence with LLM self-reflection
+### ✅ Priority 1: LLM Integration — DONE
+- Qwen3.5-9B, Vast.ai vLLM (`http://localhost:8000/v1`) üzerinden çalışıyor
+- `model_handler.py` gerçek inference yapıyor (stub yok)
+- `plan_next_action`, `evaluate_confidence`, `synthesize_report` canlı
 
-### Priority 2: Browser Integration
-1. Configure Playwright credentials if needed
-2. Replace `browser_tool.py` stubs with real Playwright calls
-3. Test search_google and extract_page_content with real sites
-4. Add error handling for blocked/captcha pages
+### ✅ Priority 2: Browser Integration — DONE
+- `BrowserConfig(headless=..., extra_chromium_args=[...])` ile doğru init
+- `browser-use Agent` gerçek DuckDuckGo / Bing aramalarını yapıyor
+- DDG 0 sonuç → Bing otomatik fallback
+- `_sanitize_encoding()` ile Qwen tokenizer bozulmaları temizleniyor
 
-### Priority 3: Production Optimization
-1. Add rate limiting (exponential backoff)
-2. Implement state persistence (Redis)
-3. Add comprehensive logging/metrics
-4. Set up monitoring and alerting
+### ✅ Priority 3: Rate Limiting — DONE
+- `SEARCH_DELAY_SECONDS` config değişkeni ile aramalar arası bekleme uygulandı
 
-### Priority 4: Testing
-1. Create test suite with mock search results
-2. Run full integration tests
-3. Validate with real news sites
-4. Performance testing
+### 🔲 Gelecek Adımlar
+1. Redis tabanlı state kalıcılığı (uzun araştırma görevleri)
+2. Prometheus metrikleri ve alerting
+3. VLM tabanlı CAPTCHA tespiti
+4. Kapsamlı entegrasyon test paketi
 
 ---
 
@@ -394,14 +391,13 @@ psql -h localhost -U postgres -d bitirme -c "SELECT source_type, COUNT(*) FROM n
 - [x] Phase 5: Docker & DevOps
 - [x] Proto files compiled
 - [x] Documentation updated
-- [x] Integration tests planned
-- [ ] **Phase 6: LLM + Browser real implementation** ← You are here
-- [ ] Production deployment
-- [ ] Performance optimization
+- [x] **Phase 6: Runtime bugfixes (BrowserConfig, encoding, Bing fallback)** ✅
+- [x] Production deployment (Vast.ai vLLM)
+- [ ] Performance optimization (Redis state, Prometheus)
 - [ ] Monitoring & alerting
 
 ---
 
-**Status: ✅ Ready for Phase 6**  
-**Current Mode: Stub Implementation (Testing)**  
-**Next Action: Deploy real LLM and Browser-Use implementations**
+**Status: ✅ Production Stable (Phase 1–6 Complete)**  
+**Current Mode: Real LLM (vLLM) + Real Browser-Use (BrowserConfig)**  
+**Next Action: Redis state persistence & monitoring**

@@ -9,6 +9,7 @@ from cua.agent.state import AgentState
 from cua.agent.browser_tool import BrowserTool
 from cua.agent.model_handler import CUAModelHandler
 from cua.agent.content_extractor import ContentExtractor
+from cua.agent.search_strategy import SearchStrategy
 from cua.config import MAX_RESEARCH_CYCLES, RESEARCH_CONFIDENCE_THRESHOLD, SEARCH_DELAY_SECONDS
 
 
@@ -60,9 +61,34 @@ def make_execute_node(ctx: GraphContext):
 
         # ── SEARCH ──────────────────────────────────────────────
         if action.get("action") == "search":
-            query   = action.get("query", state.get("query", state.get("topic", "")))
-            results = await ctx.browser.search(query, num_results=8)
+            query           = action.get("query", state.get("query", state.get("topic", "")))
+            searched_before = state.get("_searched_queries", [])
 
+            # Sorgu çeşitleme koruğacı: LLM aynı sorguyu tekrarlarsa SearchStrategy devreye girer
+            if query in searched_before:
+                alt_queries = SearchStrategy.generate_queries(
+                    topic=state.get("query", state.get("topic", "")),
+                    mode=mode,
+                    existing_findings=state.get("findings", []),
+                    cycle=state.get("cycle_count", 0),
+                    current_hypothesis=state.get("current_hypothesis", ""),
+                )
+                # Daha önce yapılmayan ilk alternatifi seç
+                for alt in alt_queries:
+                    if alt not in searched_before:
+                        print(f"[Graph] Sorgu çeşitleme: '{query}' → '{alt}'")
+                        query = alt
+                        break
+                else:
+                    # Tüm alternatifler de yapıldıysa cycle numarasını ekle
+                    query = f"{query} {state.get('cycle_count', 0)}"
+                    print(f"[Graph] Zorunlu çeşitleme: '{query}'")
+
+            # Sorguyu kaydet
+            searched_before.append(query)
+            state["_searched_queries"] = searched_before
+
+            results  = await ctx.browser.search(query, num_results=8)
             visited  = set(state.get("visited_urls", []))
             new_urls = [r for r in results if r.get("url") and r["url"] not in visited]
             state["_search_results"] = new_urls
@@ -243,6 +269,7 @@ async def run_agent(task_data: dict, browser: BrowserTool, model: CUAModelHandle
         "should_stop":        False,
         "final_report":       None,
         "error":              None,
+        "_searched_queries":  [],   # Sorgu çeşitleme koruma listesi
     }
 
     try:
