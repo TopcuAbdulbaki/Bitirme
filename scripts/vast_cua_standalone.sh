@@ -3,11 +3,13 @@ set -Eeuo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/TopcuAbdulbaki/Bitirme.git}"
 APP_DIR="${APP_DIR:-$HOME/Bitirme}"
-MODEL_ID="${MODEL_ID:-Qwen/Qwen2.5-7B-Instruct}"
+MODEL_ID="${MODEL_ID:-Qwen/Qwen3.5-9B}"
 VLLM_PORT="${VLLM_PORT:-1234}"
 VLLM_API_KEY="${VLLM_API_KEY:-lm-studio}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.85}"
+TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
+VLLM_USE_V1="${VLLM_USE_V1:-0}"
 CUA_QUERY="${CUA_QUERY:-Turkey economy 2026}"
 MAX_ARTICLES="${MAX_ARTICLES:-3}"
 MAX_CYCLES="${MAX_CYCLES:-6}"
@@ -71,6 +73,7 @@ start_vllm() {
   rm -f "$HOME/vllm.log"
 
   log "Starting vLLM model=$MODEL_ID port=$VLLM_PORT"
+  export VLLM_USE_V1
   nohup vllm serve "$MODEL_ID" \
     --trust-remote-code \
     --host 0.0.0.0 \
@@ -79,6 +82,7 @@ start_vllm() {
     --dtype half \
     --max-model-len "$MAX_MODEL_LEN" \
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
+    --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
     > "$HOME/vllm.log" 2>&1 &
 
   log "vLLM PID: $!"
