@@ -83,6 +83,10 @@ async def main():
     query    = args.query
     topic    = args.topic or query
 
+    if mode == "research":
+        print("[Test] Research mode şimdilik askıda. TODO.md içindeki not tamamlanınca yeniden açılacak.")
+        sys.exit(2)
+
     print("=" * 60)
     print("CUA STANDALONE TEST")
     print("=" * 60)
@@ -134,6 +138,7 @@ async def main():
                 "params": {
                     "max_articles": args.max_articles,
                     "max_searches": args.max_articles * 2,
+                    "max_cycles": args.max_cycles,
                 },
             }
 
