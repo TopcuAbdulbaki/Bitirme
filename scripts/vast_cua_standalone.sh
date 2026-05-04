@@ -91,12 +91,13 @@ start_vllm() {
 wait_for_vllm() {
   local models_url="http://127.0.0.1:${VLLM_PORT}/v1/models"
   local attempt
+  local auth_header="Authorization: Bearer ${VLLM_API_KEY}"
 
   log "Waiting for vLLM at $models_url"
   for attempt in $(seq 1 180); do
-    if curl -fsS "$models_url" >/dev/null 2>&1; then
+    if curl -fsS -H "$auth_header" "$models_url" >/dev/null 2>&1; then
       log "vLLM is ready"
-      curl -s "$models_url"
+      curl -s -H "$auth_header" "$models_url"
       printf '\n'
       return
     fi

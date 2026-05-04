@@ -18,3 +18,9 @@ Iki GPU varsa opsiyon:
 ```bash
 TENSOR_PARALLEL_SIZE=2 REPO_URL='https://github.com/TopcuAbdulbaki/Bitirme.git' ./vast_cua_standalone.sh
 ```
+
+vLLM'i elle kontrol ederken API key gerekir:
+
+```bash
+curl -s http://127.0.0.1:1234/v1/models -H "Authorization: Bearer lm-studio"
+```
