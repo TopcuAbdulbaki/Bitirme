@@ -46,8 +46,7 @@ class BrowserTool:
     async def initialize(self):
         """browser-use'un import edilebilir olduğunu doğrula."""
         try:
-            from browser_use import Agent, Browser
-            from browser_use.browser.browser import BrowserConfig
+            from browser_use import Agent, Browser, BrowserConfig
             if self._llm is None:
                 self._llm = _build_default_llm()
             # BrowserConfig ile doğru init (browser-use 0.11+)
