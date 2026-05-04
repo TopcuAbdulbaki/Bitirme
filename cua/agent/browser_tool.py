@@ -3,21 +3,24 @@ BrowserTool — browser-use 0.12.x uyumlu versiyon.
 
 browser-use'un kendi ChatOpenAI wrapper'ı kullanılır (langchain değil).
 Her search/extract işlemi için yeni bir Agent oluşturulur.
+Her search/extract işlemi için yeni bir Agent oluşturur.
 """
 import json
 import re
+import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from cua.config import DEFAULT_SEARCH_ENGINE, LMSTUDIO_URL
+from cua.config import DEFAULT_SEARCH_ENGINE, LMSTUDIO_URL, MODEL_NAME
 
 
 def _build_default_llm():
     """browser-use'un native ChatOpenAI ile LM Studio / vLLM bağlantısı."""
     from browser_use.llm.openai.chat import ChatOpenAI
+    current_url = os.environ.get("LMSTUDIO_URL", LMSTUDIO_URL)
     return ChatOpenAI(
-        model="local-model",
-        base_url=LMSTUDIO_URL,
+        model=MODEL_NAME,
+        base_url=current_url,
         api_key="lm-studio",
         temperature=0.2,
         timeout=200.0,
@@ -27,7 +30,7 @@ def _build_default_llm():
 
 class BrowserTool:
     """
-    browser-use Agent tabanlı web gezinme aracı (v0.12.x uyumlu).
+    browser-use Agent tabanlı web gezinme aracı (v0.11.x ve v0.12.x uyumlu).
 
     Her search() / extract_page() çağrısı:
       1. browser-use Agent oluşturur
@@ -49,18 +52,35 @@ class BrowserTool:
             from browser_use import Agent, Browser
             if self._llm is None:
                 self._llm = _build_default_llm()
-            # browser-use 0.12+ direkt argümanları kabul eder (BrowserSession)
-            self._browser = Browser(
-                headless=self.headless,
-                disable_security=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-setuid-sandbox",
-                ] + (["--start-maximized"] if not self.headless else []),
-            )
+            
+            # Geriye dönük uyumluluk: v0.11.x'de BrowserConfig var, v0.12.x'de yok
+            try:
+                from browser_use.browser.browser import BrowserConfig
+                config = BrowserConfig(
+                    headless=self.headless,
+                    disable_security=True,
+                    extra_chromium_args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-setuid-sandbox",
+                    ] + (["--start-maximized"] if not self.headless else []),
+                )
+                self._browser = Browser(config=config)
+                print(f"[BrowserTool] browser-use v0.11.x hazır (Headless: {self.headless})")
+            except ImportError:
+                # v0.12.x
+                self._browser = Browser(
+                    headless=self.headless,
+                    disable_security=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-setuid-sandbox",
+                    ] + (["--start-maximized"] if not self.headless else []),
+                )
+                print(f"[BrowserTool] browser-use v0.12.x hazır (Headless: {self.headless})")
+                
             self._initialized = True
-            print(f"[BrowserTool] browser-use hazır (Headless: {self.headless})")
         except ImportError as e:
             raise RuntimeError(
                 f"browser-use yüklü değil veya import hatası: {e}\n"

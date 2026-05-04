@@ -225,26 +225,32 @@ class CUAModelHandler:
             return
         try:
             from openai import OpenAI
-            # Bağlantı testi
-            _raw_client = OpenAI(base_url=LMSTUDIO_URL, api_key="lm-studio")
+            import os
+            # Ensure LMSTUDIO_URL is dynamically read just in case
+            current_url = os.environ.get("LMSTUDIO_URL", LMSTUDIO_URL)
+            print(f"[ModelHandler] Test connection to: {current_url}")
+            
+            _raw_client = OpenAI(base_url=current_url, api_key="lm-studio")
             models = _raw_client.models.list()
             model_ids = [m.id for m in models.data]
             print(f"[ModelHandler] LM Studio connected. Models: {model_ids}")
-            first_model = model_ids[0] if model_ids else "local-model"
+            first_model = model_ids[0] if model_ids else MODEL_NAME
             self._lmstudio_model = first_model
 
             # browser-use'un kendi dataclass ChatOpenAI'ı (provider+model native)
             self.llm = BrowserUseChatOpenAI(
                 model=first_model,
-                base_url=LMSTUDIO_URL,
+                base_url=current_url,
                 api_key="lm-studio",
                 temperature=0.3,
             )
             print(f"[ModelHandler] browser-use ChatOpenAI hazır (model={first_model})")
         except Exception as e:
-            print(f"[ModelHandler] LM Studio unavailable ({e}) — will retry at inference time")
+            import traceback
+            print(f"[ModelHandler] LM Studio unavailable: {e}")
+            traceback.print_exc()
             self.llm = None
-            self._lmstudio_model = "local-model"
+            self._lmstudio_model = MODEL_NAME
 
 
     def _init_transformers(self):
