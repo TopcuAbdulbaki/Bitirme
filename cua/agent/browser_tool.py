@@ -46,22 +46,21 @@ class BrowserTool:
     async def initialize(self):
         """browser-use'un import edilebilir olduğunu doğrula."""
         try:
-            from browser_use import Agent, Browser, BrowserConfig
+            from browser_use import Agent, Browser
             if self._llm is None:
                 self._llm = _build_default_llm()
-            # BrowserConfig ile doğru init (browser-use 0.11+)
-            config = BrowserConfig(
+            # browser-use 0.12+ direkt argümanları kabul eder (BrowserSession)
+            self._browser = Browser(
                 headless=self.headless,
                 disable_security=True,
-                extra_chromium_args=[
+                args=[
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-setuid-sandbox",
                 ] + (["--start-maximized"] if not self.headless else []),
             )
-            self._browser = Browser(config=config)
             self._initialized = True
-            print(f"[BrowserTool] browser-use hazır - BrowserConfig (Headless: {self.headless})")
+            print(f"[BrowserTool] browser-use hazır (Headless: {self.headless})")
         except ImportError as e:
             raise RuntimeError(
                 f"browser-use yüklü değil veya import hatası: {e}\n"
