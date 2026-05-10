@@ -55,33 +55,8 @@ class BrowserTool:
             if self._llm is None:
                 self._llm = _build_default_llm()
             
-            # Geriye dönük uyumluluk: v0.11.x'de BrowserConfig var, v0.12.x'de yok
-            try:
-                from browser_use.browser.browser import BrowserConfig
-                config = BrowserConfig(
-                    headless=self.headless,
-                    disable_security=True,
-                    extra_chromium_args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-setuid-sandbox",
-                    ] + (["--start-maximized"] if not self.headless else []),
-                )
-                self._browser = Browser(config=config)
-                print(f"[BrowserTool] browser-use v0.11.x hazır (Headless: {self.headless})")
-            except ImportError:
-                # v0.12.x
-                self._browser = Browser(
-                    headless=self.headless,
-                    disable_security=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-setuid-sandbox",
-                    ] + (["--start-maximized"] if not self.headless else []),
-                )
-                print(f"[BrowserTool] browser-use v0.12.x hazır (Headless: {self.headless})")
-                
+            self._browser = None
+            print(f"[BrowserTool] browser-use hazır (Headless: {self.headless})")
             self._initialized = True
         except ImportError as e:
             raise RuntimeError(
@@ -103,11 +78,38 @@ class BrowserTool:
         return Agent(
             task=task,
             llm=self._llm,
-            browser=self._browser,
+            browser=self._new_browser(),
             max_steps=max_steps,
             use_vision=True,
             vision_detail_level="high",
         )
+
+    def _new_browser(self):
+        """Create a fresh browser session for each browser-use Agent run."""
+        from browser_use import Browser
+
+        args = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-setuid-sandbox",
+        ] + (["--start-maximized"] if not self.headless else [])
+
+        try:
+            return Browser(
+                headless=self.headless,
+                disable_security=True,
+                args=args,
+                keep_alive=False,
+            )
+        except TypeError:
+            from browser_use.browser.browser import BrowserConfig
+
+            config = BrowserConfig(
+                headless=self.headless,
+                disable_security=True,
+                extra_chromium_args=args,
+            )
+            return Browser(config=config)
 
     # ------------------------------------------------------------------
     # Arama

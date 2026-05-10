@@ -6,7 +6,7 @@ langchain-openai>=0.1.0          # LM Studio OpenAI-compat client
 langgraph>=0.2.0
 
 # Browser automation (browser-use handles Playwright internally)
-browser-use>=0.1.0
+browser-use>=0.12.6
 playwright>=1.44.0               # browser-use dependency, explicit pin
 
 # gRPC (Orchestrator iletişimi)

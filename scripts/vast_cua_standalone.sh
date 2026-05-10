@@ -7,8 +7,8 @@ MODEL_ID="${MODEL_ID:-Qwen/Qwen3.5-9B}"
 VLLM_VENV="${VLLM_VENV:-$HOME/.venvs/vllm}"
 VLLM_PORT="${VLLM_PORT:-1234}"
 VLLM_API_KEY="${VLLM_API_KEY:-lm-studio}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.85}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
 VLLM_USE_V1="${VLLM_USE_V1:-0}"
 CUA_QUERY="${CUA_QUERY:-Turkey economy 2026}"
@@ -129,7 +129,7 @@ prepare_cua_env() {
   # shellcheck disable=SC1091
   source cua/.venv/bin/activate
   run python -m pip install -U pip
-  run pip install -r cua/requirements.txt
+  run pip install -U -r cua/requirements.txt
   run python -m playwright install chromium --with-deps
 }
 

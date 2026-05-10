@@ -36,6 +36,8 @@ CUA_QUERY="Turkey economy 2026"
 MAX_ARTICLES=3
 MAX_CYCLES=6
 SEARCH_ENGINE=duckduckgo
+MAX_MODEL_LEN=32768
+GPU_MEMORY_UTILIZATION=0.92
 ```
 
 ### 2. Sorgu/model parametreleriyle calistir
@@ -97,8 +99,8 @@ nohup ~/.venvs/vllm/bin/vllm serve Qwen/Qwen3.5-9B \
   --port 1234 \
   --api-key lm-studio \
   --dtype half \
-  --max-model-len 8192 \
-  --gpu-memory-utilization 0.85 \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.92 \
   --tensor-parallel-size 1 \
   > ~/vllm.log 2>&1 &
 ```
@@ -118,7 +120,7 @@ cd ~/Bitirme
 python3 -m venv cua/.venv
 source cua/.venv/bin/activate
 python -m pip install -U pip
-pip install -r cua/requirements.txt
+pip install -U -r cua/requirements.txt
 python -m playwright install chromium --with-deps
 ```
 
@@ -199,7 +201,7 @@ Repoyu guncelle:
 cd ~/Bitirme
 git pull --ff-only
 source cua/.venv/bin/activate
-pip install -r cua/requirements.txt
+pip install -U -r cua/requirements.txt
 ```
 
 ## Sonraki Node Notlari
