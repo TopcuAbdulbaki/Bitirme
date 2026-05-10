@@ -137,10 +137,13 @@ class LLMNode:
                     
                     # Process the task
                     result = await self.process_task(message.task_id, message.json_data)
+                    success = not bool(result.error)
                     
                     # Publish results back
                     result_data = {
                         'task_id': message.task_id,
+                        'status': 'SUCCESS' if success else 'FAILED',
+                        'error': result.error or '',
                         'result': result.to_dict()
                     }
                     result_msg = QueueMessage(

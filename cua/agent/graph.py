@@ -10,7 +10,12 @@ from cua.agent.browser_tool import BrowserTool
 from cua.agent.model_handler import CUAModelHandler
 from cua.agent.content_extractor import ContentExtractor
 from cua.agent.search_strategy import SearchStrategy
-from cua.config import MAX_RESEARCH_CYCLES, RESEARCH_CONFIDENCE_THRESHOLD, SEARCH_DELAY_SECONDS
+from cua.config import (
+    MAX_RESEARCH_CYCLES,
+    RESEARCH_CONFIDENCE_THRESHOLD,
+    SEARCH_DELAY_SECONDS,
+    SURFACE_EXCLUDED_DOMAINS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +94,9 @@ def make_execute_node(ctx: GraphContext):
             state["_searched_queries"] = searched_before
 
             results  = await ctx.browser.search(query, num_results=8)
+            if mode == "surface":
+                excluded = state.get("exclude_domains", SURFACE_EXCLUDED_DOMAINS)
+                results = ctx.browser.filter_excluded_domains(results, excluded)
             visited  = set(state.get("visited_urls", []))
             new_urls = [r for r in results if r.get("url") and r["url"] not in visited]
             state["_search_results"] = new_urls
@@ -123,6 +131,13 @@ def make_execute_node(ctx: GraphContext):
             visited  = state.get("visited_urls", [])
 
             if url and url not in visited:
+                if mode == "surface":
+                    excluded = state.get("exclude_domains", SURFACE_EXCLUDED_DOMAINS)
+                    allowed = ctx.browser.filter_excluded_domains([{"url": url}], excluded)
+                    if not allowed:
+                        print(f"[Graph] Surface mode skipped crawler-owned domain: {url}")
+                        return state
+
                 page_data = await ctx.browser.extract_page(url)
                 visited.append(url)
                 state["visited_urls"] = visited
@@ -261,6 +276,7 @@ async def run_agent(task_data: dict, browser: BrowserTool, model: CUAModelHandle
         "params":             task_data.get("params", {}),
         "visited_urls":       [],
         "exclude_urls":       task_data.get("exclude_urls", []),
+        "exclude_domains":    task_data.get("exclude_domains", SURFACE_EXCLUDED_DOMAINS if mode == "surface" else []),
         "collected_articles": [],
         "findings":           [],
         "current_hypothesis": "Henüz hipotez yok",
@@ -276,6 +292,10 @@ async def run_agent(task_data: dict, browser: BrowserTool, model: CUAModelHandle
         # Async invoke — tüm node'lar async olduğundan ainvoke kullanıyoruz
         final_state = await graph.ainvoke(initial_state)
         report = final_state.get("final_report") or {}
+        if mode == "surface" and not final_state.get("collected_articles"):
+            return {"mode": mode, "status": "FAILED", "error": "no valid articles collected"}
+        if mode == "research" and not final_state.get("findings"):
+            return {"mode": mode, "status": "FAILED", "error": "no research findings collected"}
         report["mode"]   = mode
         report["status"] = "COMPLETED"
         return report

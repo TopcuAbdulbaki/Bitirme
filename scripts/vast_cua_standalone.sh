@@ -4,6 +4,7 @@ set -Eeuo pipefail
 REPO_URL="${REPO_URL:-https://github.com/TopcuAbdulbaki/Bitirme.git}"
 APP_DIR="${APP_DIR:-$HOME/Bitirme}"
 MODEL_ID="${MODEL_ID:-Qwen/Qwen3.5-9B}"
+VLLM_VENV="${VLLM_VENV:-$HOME/.venvs/vllm}"
 VLLM_PORT="${VLLM_PORT:-1234}"
 VLLM_API_KEY="${VLLM_API_KEY:-lm-studio}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
@@ -63,8 +64,11 @@ prepare_repo() {
 install_vllm() {
   local py
   py="$(python_bin)"
-  run "$py" -m pip install -U pip
-  run "$py" -m pip install -U vllm transformers accelerate safetensors sentencepiece
+  run "$py" -m venv "$VLLM_VENV"
+  # shellcheck disable=SC1091
+  source "$VLLM_VENV/bin/activate"
+  run python -m pip install -U pip
+  run pip install -U vllm transformers accelerate safetensors sentencepiece
 }
 
 start_vllm() {
@@ -74,7 +78,7 @@ start_vllm() {
 
   log "Starting vLLM model=$MODEL_ID port=$VLLM_PORT"
   export VLLM_USE_V1
-  nohup vllm serve "$MODEL_ID" \
+  nohup "$VLLM_VENV/bin/vllm" serve "$MODEL_ID" \
     --trust-remote-code \
     --host 0.0.0.0 \
     --port "$VLLM_PORT" \
@@ -135,6 +139,7 @@ run_cua_standalone() {
   source cua/.venv/bin/activate
 
   export LMSTUDIO_URL="http://127.0.0.1:${VLLM_PORT}/v1"
+  export MODEL_NAME="$MODEL_ID"
   export SEARCH_ENGINE="$SEARCH_ENGINE"
   export BROWSER_HEADLESS="true"
 

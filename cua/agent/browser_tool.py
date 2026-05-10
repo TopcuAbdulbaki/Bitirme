@@ -8,8 +8,10 @@ Her search/extract işlemi için yeni bir Agent oluşturur.
 import json
 import re
 import os
+import base64
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from urllib.parse import urlparse
 
 from cua.config import DEFAULT_SEARCH_ENGINE, LMSTUDIO_URL, MODEL_NAME
 
@@ -103,6 +105,8 @@ class BrowserTool:
             llm=self._llm,
             browser=self._browser,
             max_steps=max_steps,
+            use_vision=True,
+            vision_detail_level="high",
         )
 
     # ------------------------------------------------------------------
@@ -256,6 +260,22 @@ class BrowserTool:
             })
         return result
 
+    @staticmethod
+    def filter_excluded_domains(
+        items: List[Dict[str, str]], excluded_domains: List[str]
+    ) -> List[Dict[str, str]]:
+        """Filter results whose host matches a crawler-owned domain."""
+        if not excluded_domains:
+            return items
+
+        filtered = []
+        for item in items:
+            host = urlparse(item.get("url", "")).netloc.lower().removeprefix("www.")
+            if any(host == domain or host.endswith(f".{domain}") for domain in excluded_domains):
+                continue
+            filtered.append(item)
+        return filtered
+
 
     # ------------------------------------------------------------------
     # Sayfa içeriği
@@ -324,16 +344,24 @@ class BrowserTool:
     # ------------------------------------------------------------------
 
     async def take_screenshot(self) -> Optional[bytes]:
-        """Screenshot almak için ayrı bir agent kullanılır."""
+        """Return current browser screenshot bytes when browser-use exposes a session."""
         try:
-            task = "Take a screenshot of the current page and return the file path."
-            agent  = self._agent(task, max_steps=3)
-            result = await agent.run()
-            # Screenshot bytes burada döndürülemez, None dönüyoruz
-            # Captcha çözme görevi ayrı agent task'a devredilir
+            target = self._browser
+            if target is None:
+                return None
+
+            session = getattr(target, "browser_session", target)
+            if hasattr(session, "take_screenshot"):
+                return await session.take_screenshot(full_page=False)
+
+            if hasattr(session, "get_browser_state_summary"):
+                state = await session.get_browser_state_summary(include_screenshot=True)
+                if state.screenshot:
+                    return base64.b64decode(state.screenshot)
+        except Exception as e:
+            print(f"[BrowserTool] Screenshot hatası: {e}")
             return None
-        except Exception:
-            return None
+        return None
 
     async def solve_captcha_with_vision(
         self, url: str, screenshot_bytes: bytes = None

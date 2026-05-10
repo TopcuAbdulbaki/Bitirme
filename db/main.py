@@ -170,6 +170,10 @@ class DBNode:
         
         try:
             data = json.loads(json_data)
+
+            if data.get('type') == 'research_mission':
+                await self._process_research_mission(task_id, data)
+                return
             
             # Extract components
             original = data.get('original', {})
@@ -207,6 +211,25 @@ class DBNode:
             print(f"[DB Node] Error processing task {task_id}: {e}")
         finally:
             self.grpc_client.set_status(NodeStatus.IDLE)
+
+    async def _process_research_mission(self, task_id: str, data: dict):
+        """Store a completed CUA research response."""
+        mission_id = data.get('mission_id') or task_id
+        topic = data.get('topic') or mission_id
+        status = str(data.get('status', 'completed')).lower()
+        report = data.get('report', {})
+        state = data.get('state', {})
+
+        await self.postgres.insert_research_mission({
+            'mission_id': mission_id,
+            'topic': topic,
+            'status': status
+        })
+
+        if status in ('completed', 'complete', 'success'):
+            await self.postgres.complete_research_mission(mission_id, report, state)
+
+        print(f"[DB Node] Stored research mission: {mission_id}")
     
     async def shutdown(self):
         """Shutdown all connections."""

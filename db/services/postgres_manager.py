@@ -444,6 +444,9 @@ class PostgresManager:
                 INSERT INTO research_missions (
                     mission_id, topic, status
                 ) VALUES ($1, $2, $3)
+                ON CONFLICT (mission_id) DO UPDATE SET
+                    topic = EXCLUDED.topic,
+                    status = EXCLUDED.status
             """,
                 mission_id,
                 mission_data.get('topic'),

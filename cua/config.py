@@ -33,6 +33,18 @@ DEFAULT_SEARCH_ENGINE = os.getenv("SEARCH_ENGINE", "duckduckgo")
 # Headless mod (prod=True, debug=False)
 BROWSER_HEADLESS  = os.getenv("BROWSER_HEADLESS", "true").lower() == "true"
 
+# Surface/all-in-one mode should avoid sources already covered by crawler.
+SURFACE_EXCLUDED_DOMAINS = [
+    d.strip().lower()
+    for d in os.getenv(
+        "SURFACE_EXCLUDED_DOMAINS",
+        "bbc.com,edition.cnn.com,aljazeera.com,ekathimerini.com,"
+        "greekreporter.com,greekcitytimes.com,timesofisrael.com,haaretz.com,"
+        "jpost.com,israelnationalnews.com,iranintl.com",
+    ).split(",")
+    if d.strip()
+]
+
 # ── Agent Parametreleri ─────────────────────────────────────────────────────
 MAX_ARTICLES_DEFAULT         = int(os.getenv("MAX_ARTICLES", "10"))
 MAX_SEARCHES_DEFAULT         = int(os.getenv("MAX_SEARCHES", "5"))

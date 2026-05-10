@@ -12,6 +12,11 @@ class GRPCClient:
         self.channel = None
         self.stub    = None
         self.node_id = None
+        self.status  = 0
+
+    def set_status(self, status: int):
+        """Set heartbeat status: 0=IDLE, 1=BUSY, 2=ERROR."""
+        self.status = status
 
     async def connect(self):
         """Orchestrator'a insecure gRPC bağlantısı kur."""
@@ -64,7 +69,7 @@ class GRPCClient:
                     from cua.generated import orchestrator_pb2
                     req  = orchestrator_pb2.HeartbeatRequest(
                         node_id=self.node_id,
-                        status=1,  # IDLE=1 (proto enum)
+                        status=self.status,
                     )
                     resp = await self.stub.Heartbeat(req)
                     if not resp.acknowledged:

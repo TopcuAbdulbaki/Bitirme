@@ -106,13 +106,35 @@ class Orchestrator:
                     vlm_msg = self.rabbitmq.get_message(QUEUE_VLM_RESULTS)
                     if vlm_msg:
                         print(f"[Orchestrator] VLM result received: {vlm_msg.task_id}")
-                        self.pipeline.on_vlm_complete(vlm_msg.task_id, vlm_msg.json_data)
+                        try:
+                            import json as json_module
+                            vlm_data = json_module.loads(vlm_msg.json_data)
+                            if vlm_data.get('status') == 'FAILED':
+                                self.pipeline.on_vlm_failed(
+                                    vlm_msg.task_id,
+                                    vlm_data.get('error', 'unknown error')
+                                )
+                            else:
+                                self.pipeline.on_vlm_complete(vlm_msg.task_id, vlm_msg.json_data)
+                        except Exception as e:
+                            self.pipeline.on_vlm_failed(vlm_msg.task_id, f"invalid VLM result: {e}")
                     
                     # Check LLM results
                     llm_msg = self.rabbitmq.get_message(QUEUE_LLM_RESULTS)
                     if llm_msg:
                         print(f"[Orchestrator] LLM result received: {llm_msg.task_id}")
-                        self.pipeline.on_llm_complete(llm_msg.task_id, llm_msg.json_data)
+                        try:
+                            import json as json_module
+                            llm_data = json_module.loads(llm_msg.json_data)
+                            if llm_data.get('status') == 'FAILED':
+                                self.pipeline.on_llm_failed(
+                                    llm_msg.task_id,
+                                    llm_data.get('error', 'unknown error')
+                                )
+                            else:
+                                self.pipeline.on_llm_complete(llm_msg.task_id, llm_msg.json_data)
+                        except Exception as e:
+                            self.pipeline.on_llm_failed(llm_msg.task_id, f"invalid LLM result: {e}")
                     
                     # Check Agent results
                     agent_msg = self.rabbitmq.get_message(QUEUE_AGENT_RESULTS)
@@ -122,10 +144,17 @@ class Orchestrator:
                         try:
                             import json as json_module
                             agent_data = json_module.loads(agent_msg.json_data)
-                            if agent_data.get('stage') == 'surface':
+                            if agent_data.get('status') == 'FAILED':
+                                self.pipeline.on_task_failed(
+                                    agent_msg.task_id,
+                                    agent_data.get('error', 'unknown agent error')
+                                )
+                            elif (agent_data.get('stage') or agent_data.get('mode')) == 'surface':
                                 self.pipeline.on_agent_surface_complete(agent_msg.task_id, agent_msg.json_data)
-                            elif agent_data.get('stage') == 'research':
+                            elif (agent_data.get('stage') or agent_data.get('mode')) == 'research':
                                 self.pipeline.on_agent_research_complete(agent_msg.task_id, agent_msg.json_data)
+                            else:
+                                print(f"[Orchestrator] Unknown agent result type: {agent_data.get('stage') or agent_data.get('mode')}")
                         except Exception as e:
                             print(f"[Orchestrator] Error parsing agent result: {e}")
                         

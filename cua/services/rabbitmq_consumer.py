@@ -13,6 +13,7 @@ from cua.config import (
 class QueueMessage:
     task_id: str
     json_data: str
+    delivery_tag: int | None = None
 
 class RabbitMQConsumer:
     def __init__(self):
@@ -53,8 +54,11 @@ class RabbitMQConsumer:
             method, properties, body = self.channel.basic_get(queue=queue_name)
             if method:
                 data = json.loads(body.decode('utf-8'))
-                self.channel.basic_ack(delivery_tag=method.delivery_tag)
-                return QueueMessage(task_id=data.get('task_id'), json_data=body.decode('utf-8'))
+                return QueueMessage(
+                    task_id=data.get('task_id'),
+                    json_data=data.get('json_data', body.decode('utf-8')),
+                    delivery_tag=method.delivery_tag,
+                )
         except Exception as e:
             print(f"[CUA] Error getting message from {queue_name}: {e}")
         return None
@@ -62,7 +66,7 @@ class RabbitMQConsumer:
     def publish_result(self, task_id: str, result_data: dict) -> bool:
         """Publish result to agent_results queue."""
         try:
-            msg = {"task_id": task_id, **result_data}
+            msg = {"task_id": task_id, "json_data": json.dumps(result_data)}
             self.channel.basic_publish(
                 exchange='',
                 routing_key=QUEUE_AGENT_RESULTS,
@@ -73,6 +77,16 @@ class RabbitMQConsumer:
         except Exception as e:
             print(f"[CUA] Error publishing result: {e}")
             return False
+
+    def ack(self, msg: QueueMessage):
+        """Acknowledge a task after its result has been published."""
+        if msg.delivery_tag is not None:
+            self.channel.basic_ack(delivery_tag=msg.delivery_tag)
+
+    def nack(self, msg: QueueMessage, requeue: bool = True):
+        """Reject a task when processing cannot publish a result."""
+        if msg.delivery_tag is not None:
+            self.channel.basic_nack(delivery_tag=msg.delivery_tag, requeue=requeue)
 
     def close(self):
         """Close RabbitMQ connection."""

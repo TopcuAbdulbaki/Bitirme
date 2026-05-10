@@ -147,6 +147,10 @@ class PipelineManager:
             self.rabbitmq.publish_llm_task(task_id, combined)
             task.stage = PipelineStage.LLM_ANALYZING
             print(f"[Pipeline] {task_id} -> LLM_ANALYZING")
+
+    def on_vlm_failed(self, task_id: str, error: str):
+        """Handle VLM failure without continuing to LLM."""
+        self.on_task_failed(task_id, f"VLM failed: {error}")
     
     def on_llm_complete(self, task_id: str, result_json: str):
         """Handle LLM analysis complete - send to DB for storage."""
@@ -174,6 +178,10 @@ class PipelineManager:
                     print(f"[Pipeline] {task_id} -> Published to DB queue")
             except Exception as e:
                 print(f"[Pipeline] Error publishing to DB queue: {e}")
+
+    def on_llm_failed(self, task_id: str, error: str):
+        """Handle LLM failure without continuing to DB."""
+        self.on_task_failed(task_id, f"LLM failed: {error}")
     
     def _fan_out_to_cua(self, keywords: str) -> bool:
         """
@@ -192,29 +200,39 @@ class PipelineManager:
             return False
         
         print(f"[Pipeline] Found idle CUA node: {node.node_id} at {node.host}:{node.port}")
+
+        if not self.rabbitmq:
+            print("[Pipeline] RabbitMQ not available, cannot publish to agent_tasks")
+            return False
         
         # Create agent task
         task_id = self.generate_task_id()
-        task_data = json.dumps({
+        task_data_dict = {
             'task_id': task_id,
-            'keywords': keywords,
+            'mode': 'research',
+            'topic': keywords,
+            'query': keywords,
+            'params': {
+                'max_articles': 10
+            },
             'timestamp': datetime.utcnow().isoformat()
-        })
+        }
+        task_data = json.dumps(task_data_dict)
+        self._tasks[task_id] = PipelineTask(
+            task_id=task_id,
+            raw_data=task_data,
+            stage=PipelineStage.AGENT_RESEARCH
+        )
         
-        # Publish to agent_tasks queue
-        if self.rabbitmq:
-            success = self.rabbitmq.publish_agent_task(task_id, task_data)
-            if success:
-                print(f"[Pipeline] {task_id} -> Published to agent_tasks queue")
-                # Mark node as busy
-                self.registry.set_node_busy(node.node_id, task_id)
-                return True
-            else:
-                print(f"[Pipeline] Failed to publish {task_id} to agent_tasks queue")
-                return False
-        else:
-            print("[Pipeline] RabbitMQ not available, cannot publish to agent_tasks")
-            return False
+        success = self.rabbitmq.publish_agent_task(task_id, task_data)
+        if success:
+            print(f"[Pipeline] {task_id} -> Published to agent_tasks queue")
+            self.registry.set_node_busy(node.node_id, task_id)
+            return True
+
+        print(f"[Pipeline] Failed to publish {task_id} to agent_tasks queue")
+        self.on_task_failed(task_id, "Failed to publish to agent_tasks queue")
+        return False
     
     def on_agent_surface_complete(self, task_id: str, surface_data: str):
         """Handle agent surface research completion."""
@@ -225,6 +243,7 @@ class PipelineManager:
         
         task.stage = PipelineStage.AGENT_SURFACE
         print(f"[Pipeline] {task_id} -> AGENT_SURFACE")
+        self._publish_agent_result_to_db(task_id, surface_data)
     
     def on_agent_research_complete(self, task_id: str, research_data: str):
         """Handle agent research completion."""
@@ -235,6 +254,38 @@ class PipelineManager:
         
         task.stage = PipelineStage.AGENT_RESEARCH
         print(f"[Pipeline] {task_id} -> AGENT_RESEARCH")
+        self._publish_agent_result_to_db(task_id, research_data)
+
+    def _publish_agent_result_to_db(self, task_id: str, result_data: str):
+        """Publish completed CUA result to DB for research_missions storage."""
+        if not self.rabbitmq:
+            print("[Pipeline] RabbitMQ not available, cannot store agent result")
+            return
+
+        try:
+            result = json.loads(result_data)
+            request = json.loads(self._tasks[task_id].raw_data or "{}")
+            db_payload = json.dumps({
+                'type': 'research_mission',
+                'mission_id': task_id,
+                'topic': request.get('topic') or request.get('query') or result.get('topic') or result.get('query'),
+                'status': str(result.get('status', 'COMPLETED')).lower(),
+                'report': result,
+                'state': result.get('state', {})
+            })
+            if self.rabbitmq.publish_db_task(task_id, db_payload):
+                self._tasks[task_id].stage = PipelineStage.AGENT_COMPLETE
+                self._tasks[task_id].completed_at = datetime.utcnow()
+                self._release_node_for_task(task_id)
+                print(f"[Pipeline] {task_id} -> Agent result published to DB queue")
+        except Exception as e:
+            self.on_task_failed(task_id, f"Agent DB publish failed: {e}")
+
+    def _release_node_for_task(self, task_id: str):
+        """Mark any node assigned to this task as idle."""
+        for node in self.registry.get_all_nodes():
+            if node.current_task_id == task_id:
+                self.registry.set_node_idle(node.node_id)
     
     def on_task_failed(self, task_id: str, error: str):
         """Handle task failure."""
@@ -242,6 +293,8 @@ class PipelineManager:
         if task:
             task.stage = PipelineStage.FAILED
             task.error = error
+            task.completed_at = datetime.utcnow()
+            self._release_node_for_task(task_id)
             print(f"[Pipeline] {task_id} -> FAILED: {error}")
     
     def get_task(self, task_id: str) -> Optional[PipelineTask]:
@@ -252,7 +305,7 @@ class PipelineManager:
         """Get tasks that are not complete or failed."""
         return [
             t for t in self._tasks.values()
-            if t.stage not in (PipelineStage.COMPLETE, PipelineStage.FAILED)
+            if t.stage not in (PipelineStage.COMPLETE, PipelineStage.AGENT_COMPLETE, PipelineStage.FAILED)
         ]
     
     async def trigger_crawl(self, urls: list[str] = None):
@@ -304,7 +357,7 @@ class PipelineManager:
         cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
         to_remove = [
             tid for tid, task in self._tasks.items()
-            if task.stage == PipelineStage.COMPLETE 
+            if task.stage in (PipelineStage.COMPLETE, PipelineStage.AGENT_COMPLETE, PipelineStage.FAILED)
             and task.completed_at 
             and task.completed_at < cutoff
         ]

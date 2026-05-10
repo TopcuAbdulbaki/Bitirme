@@ -161,6 +161,28 @@ class VLMNode:
             self.grpc_client.set_status(NodeStatus.IDLE)
         
         return results
+
+    @staticmethod
+    def _has_image_references(json_data: str) -> bool:
+        """Return True when the task payload contains images VLM was expected to analyze."""
+        try:
+            data = json.loads(json_data)
+        except Exception:
+            return False
+
+        media = data.get('media') or {}
+        return bool(media.get('main_image') or media.get('content_images'))
+
+    @staticmethod
+    def _is_successful_result(results: list[ImageAnalysisResult], expected_images: bool) -> tuple[bool, str]:
+        """VLM may return per-image errors; only advance when at least one analysis succeeded."""
+        successful = [r for r in results if not r.error]
+        if successful:
+            return True, ""
+        if expected_images:
+            errors = [r.error for r in results if r.error]
+            return False, "; ".join(errors) or "no image analysis was produced"
+        return True, ""
     
     async def run(self):
         """Run the VLM node - consume from RabbitMQ queue."""
@@ -183,10 +205,14 @@ class VLMNode:
                     
                     # Process the task
                     results = await self.process_task(message.task_id, message.json_data)
+                    expected_images = self._has_image_references(message.json_data)
+                    success, error = self._is_successful_result(results, expected_images)
                     
                     # Publish results back
                     result_data = {
                         'task_id': message.task_id,
+                        'status': 'SUCCESS' if success else 'FAILED',
+                        'error': error,
                         'results': [r.to_dict() for r in results]
                     }
                     result_msg = QueueMessage(

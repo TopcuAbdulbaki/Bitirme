@@ -77,17 +77,18 @@ class CUANode:
                 msg = self.rabbitmq.get_message(QUEUE_AGENT_TASKS)
                 if msg:
                     print(f"[CUA] Görev alındı: {msg.task_id}")
-                    asyncio.create_task(self._handle_task(msg))
+                    await self._handle_task(msg)
             except Exception as e:
                 print(f"[CUA] Kuyruk okuma hatası: {e}")
             await asyncio.sleep(1)
 
     async def _handle_task(self, msg):
         """Tek bir görevi işle (asenkron, paralel görevlere hazır)."""
+        self.grpc_client.set_status(1)
         try:
             task_data = json.loads(msg.json_data)
             mode      = task_data.get("mode", "surface")
-            topic     = task_data.get("topic", task_data.get("query", "?"))
+            topic     = task_data.get("topic", task_data.get("query", task_data.get("keywords", "?")))
             print(f"[CUA] İşleniyor: mode={mode}, topic/query='{topic}'")
 
             # LangGraph döngüsünü çalıştır
@@ -100,22 +101,28 @@ class CUANode:
             # Sonucu agent_results kuyruğuna yayınla
             ok = self.rabbitmq.publish_result(msg.task_id, result)
             if ok:
+                self.rabbitmq.ack(msg)
                 print(f"[CUA] Görev tamamlandı ve yayınlandı: {msg.task_id}")
             else:
+                self.rabbitmq.nack(msg, requeue=True)
                 print(f"[CUA] Sonuç yayınlanamadı: {msg.task_id}")
 
         except json.JSONDecodeError as e:
             print(f"[CUA] Geçersiz JSON mesajı: {e}")
-            self.rabbitmq.publish_result(
+            ok = self.rabbitmq.publish_result(
                 msg.task_id,
                 {"status": "FAILED", "error": f"JSON parse hatası: {e}"}
             )
+            self.rabbitmq.ack(msg) if ok else self.rabbitmq.nack(msg, requeue=False)
         except Exception as e:
             print(f"[CUA] Görev işleme hatası ({msg.task_id}): {e}")
-            self.rabbitmq.publish_result(
+            ok = self.rabbitmq.publish_result(
                 msg.task_id,
                 {"status": "FAILED", "error": str(e)}
             )
+            self.rabbitmq.ack(msg) if ok else self.rabbitmq.nack(msg, requeue=True)
+        finally:
+            self.grpc_client.set_status(0)
 
     async def shutdown(self):
         """Tüm servisleri temiz kapat."""
