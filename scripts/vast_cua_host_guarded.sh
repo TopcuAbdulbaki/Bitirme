@@ -101,7 +101,63 @@ install_system_packages() {
     log "apt-get update"
     as_root apt-get update
     log "apt-get install base packages"
-    as_root apt-get install -y git curl ca-certificates build-essential python3-venv python3-pip psmisc
+    as_root apt-get install -y git curl ca-certificates build-essential python3-venv python3-pip
+  fi
+}
+
+port_listener_pids() {
+  python3 - "$1" <<'PY'
+import os
+import socket
+import struct
+import sys
+
+port = int(sys.argv[1])
+hex_port = f"{port:04X}"
+inodes = set()
+
+def collect(path):
+    try:
+        with open(path) as f:
+            next(f)
+            for line in f:
+                parts = line.split()
+                local = parts[1]
+                state = parts[3]
+                if local.endswith(":" + hex_port) and state == "0A":
+                    inodes.add(parts[9])
+    except FileNotFoundError:
+        pass
+
+collect("/proc/net/tcp")
+collect("/proc/net/tcp6")
+
+if not inodes:
+    raise SystemExit
+
+for pid in filter(str.isdigit, os.listdir("/proc")):
+    fd_dir = f"/proc/{pid}/fd"
+    try:
+        for fd in os.listdir(fd_dir):
+            try:
+                target = os.readlink(f"{fd_dir}/{fd}")
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target[8:-1] in inodes:
+                cmd = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="ignore")
+                print(f"{pid}\t{cmd}")
+                break
+    except OSError:
+        pass
+PY
+}
+
+ensure_vllm_port_free() {
+  local listeners
+  listeners="$(port_listener_pids "$VLLM_PORT" || true)"
+  if [ -n "$listeners" ]; then
+    printf '\n[FAIL] Port %s is already in use:\n%s\n' "$VLLM_PORT" "$listeners" >&2
+    die "Set VLLM_PORT to a free port, for example: VLLM_PORT=1235 ./vast_cua_host_guarded.sh"
   fi
 }
 
@@ -184,12 +240,11 @@ prepare_cua_env() {
 
 start_vllm() {
   mkdir -p "$MODEL_DOWNLOAD_DIR"
+  ensure_vllm_port_free
   pkill -f "vllm serve" >/dev/null 2>&1 || true
   pkill -f "vllm.entrypoints.openai.api_server" >/dev/null 2>&1 || true
-  if command -v fuser >/dev/null 2>&1; then
-    fuser -k "${VLLM_PORT}/tcp" >/dev/null 2>&1 || true
-  fi
   sleep 2
+  ensure_vllm_port_free
   rm -f "$HOME/vllm.log"
 
   # shellcheck disable=SC1091
