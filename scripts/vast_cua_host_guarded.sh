@@ -27,7 +27,7 @@ CUA_QUERY="${CUA_QUERY:-Turkey economy 2026}"
 MAX_ARTICLES="${MAX_ARTICLES:-3}"
 MAX_CYCLES="${MAX_CYCLES:-6}"
 SEARCH_ENGINE="${SEARCH_ENGINE:-duckduckgo}"
-BROWSER_HEADLESS="${BROWSER_HEADLESS:-true}"
+BROWSER_HEADLESS="${BROWSER_HEADLESS:-false}"
 MIN_CUDA_DRIVER_VERSION="${MIN_CUDA_DRIVER_VERSION:-12.8}"
 MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-7.0}"
 
@@ -328,6 +328,7 @@ run_cua() {
         --query "$CUA_QUERY" \
         --max-articles "$MAX_ARTICLES" \
         --max-cycles "$MAX_CYCLES" \
+        --headless "$BROWSER_HEADLESS" \
         --engine "$SEARCH_ENGINE" \
         --lmstudio-url "$LMSTUDIO_URL"
       ;;

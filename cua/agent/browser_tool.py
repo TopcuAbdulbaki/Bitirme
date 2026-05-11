@@ -163,8 +163,8 @@ class BrowserTool:
         print(f"[BrowserTool] DuckDuckGo: {query}")
         encoded = query.replace(" ", "+")
         task = (
-            f"Navigate directly to https://duckduckgo.com/?q={encoded} "
-            f"and wait for the search results page to load.\n"
+            f"Your FIRST browser action MUST be navigate to https://duckduckgo.com/?q={encoded}.\n"
+            f"Do not wait before navigating. After navigating, wait at most once for 3 seconds.\n"
             f"DO NOT go to Google, Bing or any other search engine.\n"
             f"If you see a CAPTCHA, human verification, empty page, or anti-bot challenge, stop immediately and return [] only.\n"
             f"Do not try to solve CAPTCHA. Do not keep waiting after the page is still empty.\n"
@@ -344,6 +344,9 @@ class BrowserTool:
 
     def _parse_search_results(self, raw: str) -> List[Dict[str, str]]:
         """JSON veya numaralı liste formatını parse eder."""
+        if not (raw or "").strip():
+            return []
+
         # --- 1. Deneme: JSON array (greedy — tüm array'i yakala) ---
         match = re.search(r"\[\s*\{[\s\S]*\}\s*\]", raw)
         if match:

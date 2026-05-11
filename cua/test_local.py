@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from cua.agent.browser_tool import BrowserTool
 from cua.agent.model_handler import CUAModelHandler
 from cua.agent.graph import run_agent
+from cua.config import BROWSER_HEADLESS
 
 
 def parse_args():
@@ -40,10 +41,10 @@ def parse_args():
                    help="Surface modda toplanacak max makale sayısı")
     p.add_argument("--max-cycles",   type=int, default=8,
                    help="Maksimum döngü sayısı")
-    p.add_argument("--headless",     default="true",
+    p.add_argument("--headless",     default="true" if BROWSER_HEADLESS else "false",
                    help="true/false — tarayıcı görünür olsun mu?")
     p.add_argument("--engine",       default="duckduckgo",
-                   choices=["google", "duckduckgo", "bing"],
+                   choices=["google", "duckduckgo", "bing", "auto"],
                    help="Arama motoru (duckduckgo önerilen, CAPTCHA yok)")
     p.add_argument("--model-mode",   default="local",
                    choices=["local", "production"],

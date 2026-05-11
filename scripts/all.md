@@ -84,6 +84,12 @@ RESET_VLLM_VENV=true
 MIN_CUDA_DRIVER_VERSION=12.8
 ```
 
+Standalone debug icin guarded host scriptte browser varsayilan olarak gorunur gelir:
+
+```bash
+BROWSER_HEADLESS=false
+```
+
 Repo public oldugu icin token gerekmez. Eski script repo dosyalarini GitHub'dan ceker, vLLM'i ayri venv'e kurar, Qwen vision modeli servis eder, CUA venv'ini hazirlar ve standalone surface testi calistirir.
 
 ```bash
@@ -106,6 +112,7 @@ CUA_QUERY="Turkey economy 2026"
 MAX_ARTICLES=3
 MAX_CYCLES=6
 SEARCH_ENGINE=duckduckgo
+BROWSER_HEADLESS=false
 MAX_MODEL_LEN=32768
 GPU_MEMORY_UTILIZATION=0.92
 MIN_CUDA_DRIVER_VERSION=12.8
