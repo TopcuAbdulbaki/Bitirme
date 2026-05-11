@@ -39,7 +39,7 @@ def parse_args():
                    help="Opsiyonel konu etiketi (boşsa query kullanılır)")
     p.add_argument("--max-articles", type=int, default=5,
                    help="Surface modda toplanacak max makale sayısı")
-    p.add_argument("--max-cycles",   type=int, default=8,
+    p.add_argument("--max-cycles",   type=int, default=15,
                    help="Maksimum döngü sayısı")
     p.add_argument("--headless",     default="true" if BROWSER_HEADLESS else "false",
                    help="true/false — tarayıcı görünür olsun mu?")

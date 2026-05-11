@@ -182,40 +182,57 @@ Respond ONLY with valid JSON:
 # JSON extraction helper
 # ---------------------------------------------------------------------------
 
-def _extract_json(text: str) -> Optional[Dict[str, Any]]:
-    """Pull the first JSON object out of an LLM response."""
-    text = text.strip()
-    # Try direct parse
+def _strip_llm_wrappers(text: str) -> str:
+    """Remove common model wrappers without trying to reinterpret content."""
+    text = (text or "").strip()
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE)
+    return text.replace("```", "").strip()
+
+
+def _first_json_value(text: str, openers: str = "{["):
+    """Parse the first valid JSON object/array without greedy regex matching."""
+    text = _strip_llm_wrappers(text)
+    decoder = json.JSONDecoder()
+
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Try to find a JSON block
-    match = re.search(r"\{[\s\S]*\}", text)
-    if match:
+
+    for idx, char in enumerate(text):
+        if char not in openers:
+            continue
         try:
-            return json.loads(match.group())
+            value, _ = decoder.raw_decode(text[idx:])
         except json.JSONDecodeError:
-            pass
+            continue
+        return value
     return None
+
+
+def _extract_json(text: str) -> Optional[Dict[str, Any]]:
+    """Pull the first valid JSON object out of an LLM response."""
+    value = _first_json_value(text, "{")
+    return value if isinstance(value, dict) else None
 
 
 def _extract_json_array(text: str) -> Optional[list]:
-    """Pull the first JSON array out of an LLM response."""
-    text = (text or "").strip()
-    try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, list) else None
-    except json.JSONDecodeError:
-        pass
-    match = re.search(r"\[[\s\S]*\]", text)
-    if match:
-        try:
-            parsed = json.loads(match.group())
-            return parsed if isinstance(parsed, list) else None
-        except json.JSONDecodeError:
-            pass
-    return None
+    """Pull the first valid JSON array out of an LLM response."""
+    value = _first_json_value(text, "[")
+    return value if isinstance(value, list) else None
+
+
+def _clean_model_text(text: str, max_chars: int = 1200) -> str:
+    """Best-effort cleanup for useful free-text model output."""
+    text = _strip_llm_wrappers(text)
+    text = re.sub(r"\bthe user wants me to [^.]+\.\s*", "", text, flags=re.I)
+    text = re.sub(r"\b(?:i need to|i should) [^.]+\.\s*", "", text, flags=re.I)
+    text = re.sub(r"^\s*(Thinking Process|Reasoning|Analysis)\s*:\s*", "", text, flags=re.I)
+    text = re.sub(r"[*_`#]+", "", text)
+    text = re.sub(r"\b\d+\.\s*Analyze the Image\s*:?", "", text, flags=re.I)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:max_chars]
 
 
 # ---------------------------------------------------------------------------
@@ -378,8 +395,8 @@ Rules:
         try:
             raw = await self._call_llm(prompt, max_tokens=512)
             items = _extract_json_array(raw) or []
-            queries = self._normalize_query_list(items, base_query, count)
-            if queries:
+            queries = self._complete_query_plan(items, base_query, collected, count)
+            if len(queries) > 1 or not items:
                 print(f"[ModelHandler] Query plan: {queries}")
                 return queries
             print(f"[ModelHandler] Query plan parse failed, raw='{raw[:200]}'")
@@ -391,6 +408,23 @@ Rules:
         for cycle in range(max(count, 3)):
             fallback.extend(SearchStrategy.generate_queries(base_query, "surface", collected, cycle, ""))
         return self._normalize_query_list(fallback, base_query, count)
+
+    def _complete_query_plan(
+        self,
+        items: list,
+        base_query: str,
+        collected: list,
+        count: int,
+    ) -> list[str]:
+        from cua.agent.search_strategy import SearchStrategy
+
+        candidates = list(items or [])
+        if len(candidates) < count:
+            for cycle in range(max(count, 3)):
+                candidates.extend(SearchStrategy.generate_queries(base_query, "surface", collected, cycle, ""))
+                if len(candidates) >= count * 2:
+                    break
+        return self._normalize_query_list(candidates, base_query, count)
 
     def _normalize_query_list(self, items: list, base_query: str, count: int) -> list[str]:
         queries = [base_query]
@@ -515,6 +549,13 @@ Article context: {article.get('content', '')[:800]}"""
                     "objects": parsed.get("objects", []) if isinstance(parsed.get("objects", []), list) else [],
                     "sentiment": self._normalize_label(parsed.get("sentiment"), {"positive", "negative", "neutral"}, "neutral"),
                     "relevance": self._normalize_label(parsed.get("relevance"), {"high", "medium", "low"}, "medium"),
+                })
+                return result_base
+            description = _clean_model_text(content)
+            if len(description) >= 20:
+                result_base.update({
+                    "description": description,
+                    "relevance": "medium",
                 })
                 return result_base
             result_base["error"] = f"image analysis parse failed: {content[:160]}"

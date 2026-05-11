@@ -111,7 +111,7 @@ VLLM_PORT=1234
 VLLM_API_KEY=lm-studio
 CUA_QUERY="Turkey economy 2026"
 MAX_ARTICLES=3
-MAX_CYCLES=6
+MAX_CYCLES=15
 SEARCH_ENGINE=duckduckgo
 BROWSER_HEADLESS=false
 CUA_MAX_QUERY_PLAN=10
@@ -130,7 +130,7 @@ RESET_CUA_VENV=false
 ```bash
 CUA_QUERY="Turkey inflation latest news" \
 MAX_ARTICLES=5 \
-MAX_CYCLES=8 \
+MAX_CYCLES=15 \
 ./vast_cua_standalone.sh
 ```
 
@@ -224,7 +224,7 @@ python -m cua.test_local \
   --mode surface \
   --query "Turkey economy 2026" \
   --max-articles 3 \
-  --max-cycles 6 \
+  --max-cycles 15 \
   --engine duckduckgo \
   --lmstudio-url "$LMSTUDIO_URL" \
   --output cua_test_result_surface.json

@@ -187,7 +187,8 @@ class BrowserTool:
         print(f"[BrowserTool] Extract: {url}")
         page = await self._ensure_page()
         try:
-            await page.goto(url, wait_until="domcontentloaded")
+            response = await page.goto(url, wait_until="domcontentloaded")
+            status_code = response.status if response else 0
             await page.wait_for_timeout(2000)
             await self._dismiss_common_popups(page)
             await page.evaluate("window.scrollTo(0, Math.min(document.body.scrollHeight, 2400))")
@@ -220,7 +221,7 @@ class BrowserTool:
                     if (content.length < 200) {
                         content = clean(articleRoot.innerText || document.body.innerText || '');
                     }
-                    const imageCandidates = Array.from(document.images).map((img) => {
+                    const imageCandidates = Array.from(articleRoot.querySelectorAll('img')).map((img) => {
                         const rect = img.getBoundingClientRect();
                         const parent = img.closest('figure, article, section, div') || img.parentElement;
                         return {
@@ -232,6 +233,7 @@ class BrowserTool:
                             natural_width: img.naturalWidth || 0,
                             natural_height: img.naturalHeight || 0,
                             class_name: img.className || '',
+                            parent_class: parent?.className || '',
                             near_text: clean(parent?.innerText || '').slice(0, 300)
                         };
                     }).filter((img) => img.url && /^https?:/.test(img.url));
@@ -255,7 +257,8 @@ class BrowserTool:
 
             media = self._select_media(data)
             article_links = self._extract_article_links(data.get("article_links", []), url)
-            is_article = self._looks_like_article_page(data, article_links)
+            is_error_page = self._looks_like_error_page(data, status_code)
+            is_article = not is_error_page and self._looks_like_article_page(data, article_links)
             result = {
                 "url": url,
                 "title": self._repair_text(data.get("title", "")),
@@ -264,6 +267,8 @@ class BrowserTool:
                 "media": media,
                 "article_links": article_links,
                 "is_article": is_article,
+                "is_error_page": is_error_page,
+                "http_status": status_code,
                 "timestamp": datetime.now().isoformat(),
             }
             return result
@@ -290,7 +295,10 @@ class BrowserTool:
 
     def _select_media(self, data: Dict[str, Any]) -> Dict[str, Any]:
         main_image = self._clean_image_url(data.get("main_image", ""))
-        if main_image and self._is_blocked_image_type(main_image):
+        if main_image and not self._is_valid_content_image(
+            main_image,
+            {"alt": data.get("title", ""), "title": data.get("title", ""), "class_name": ""},
+        ):
             main_image = ""
 
         image_versions: Dict[str, Dict[str, Any]] = {}
@@ -349,11 +357,13 @@ class BrowserTool:
             "banner", "ad-", "advert", "promo",
             "button", "arrow", "play", "pause",
             "thumb", "thumbnail", "-thumb.",
+            "150x150", "120x120", "100x100", "80x80",
             "placeholder", "loading", "spinner",
             "facebook", "twitter", "social", "share",
             "pixel", "tracker", "1x1",
             "header", "footer", "menu", "nav",
-            "flag", "comment-input",
+            "flag", "comment-input", "newsletter", "related",
+            "sidebar", "popular", "recommended", "most-read",
         ]
         if any(keyword in img_lower for keyword in blocked_keywords):
             return False
@@ -363,6 +373,8 @@ class BrowserTool:
                 str(img_data.get("alt", "")),
                 str(img_data.get("title", "")),
                 str(img_data.get("class_name", "")),
+                str(img_data.get("parent_class", "")),
+                str(img_data.get("near_text", ""))[:120],
             ]).lower()
             if any(keyword in text for keyword in blocked_keywords):
                 return False
@@ -447,6 +459,34 @@ class BrowserTool:
         if len(article_links) >= 8 and paragraph_count <= 3:
             return False
         return True
+
+    def _looks_like_error_page(self, data: Dict[str, Any], status_code: int = 0) -> bool:
+        title = (data.get("title") or "")
+        content = (data.get("content") or "")
+        body = (data.get("body_text") or "")
+        text = f"{title}\n{content}\n{body}".lower()
+        markers = [
+            "web server is returning an unknown error",
+            "origin is unreachable",
+            "error code 520",
+            "error code 521",
+            "error code 522",
+            "error code 523",
+            "cloudflare ray id",
+            "performance & security by cloudflare",
+            "there is an unknown connection issue",
+            "could not reach your host web server",
+            "check your dns settings",
+            "verify you are human",
+            "human verification",
+            "are you a robot",
+            "captcha challenge",
+            "complete the captcha",
+            "solve captcha",
+        ]
+        if status_code >= 400:
+            return True
+        return any(marker in text for marker in markers)
 
     def _extract_article_links(self, links: List[Dict[str, str]], current_url: str) -> List[Dict[str, str]]:
         current_host = urlparse(current_url).netloc.lower().removeprefix("www.")
@@ -627,15 +667,26 @@ class BrowserTool:
         if not text:
             return ""
         text = text.replace("\\'", "'").replace("\\\\", "\\")
-        mojibake_markers = ("Ã", "Ä", "Å", "â", "Â")
-        if any(marker in text for marker in mojibake_markers):
-            try:
-                repaired = text.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
-                if repaired and len(repaired) >= len(text) * 0.6:
-                    text = repaired
-            except Exception:
-                pass
+        if self._mojibake_score(text) > 0:
+            candidates = [text]
+            for encoding in ("latin1", "cp1252"):
+                try:
+                    candidates.append(text.encode(encoding, errors="ignore").decode("utf-8", errors="ignore"))
+                except Exception:
+                    pass
+            text = min(
+                (candidate for candidate in candidates if len(candidate) >= len(text) * 0.6),
+                key=lambda candidate: (self._mojibake_score(candidate), -len(candidate)),
+                default=text,
+            )
         return text.strip()
+
+    @staticmethod
+    def _mojibake_score(text: str) -> int:
+        markers = ("Ã", "Ä", "Å", "Â", "â", "�")
+        score = sum(text.count(marker) for marker in markers)
+        score += len(re.findall(r"[\u0080-\u009f]", text)) * 3
+        return score
 
     async def take_screenshot(self) -> Optional[bytes]:
         try:

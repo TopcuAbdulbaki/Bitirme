@@ -199,7 +199,9 @@ class ContentExtractor:
             "article information extracted successfully",
             "the user wants me to extract",
         )
-        return not content.strip().lower().startswith(bad_prefixes)
+        if content.strip().lower().startswith(bad_prefixes):
+            return False
+        return not ContentExtractor._looks_like_error_page(title, content)
 
     @staticmethod
     def _clean_content(content: Any) -> str:
@@ -240,15 +242,64 @@ class ContentExtractor:
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
-        mojibake_markers = ("Ã", "Ä", "Å", "â", "Â")
-        if any(marker in text for marker in mojibake_markers):
-            try:
-                repaired = text.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
-                if repaired and len(repaired) >= len(text) * 0.6:
-                    text = repaired
-            except Exception:
-                pass
+        if ContentExtractor._mojibake_score(text) > 0:
+            candidates = [text]
+            for encoding in ("latin1", "cp1252"):
+                try:
+                    candidates.append(text.encode(encoding, errors="ignore").decode("utf-8", errors="ignore"))
+                except Exception:
+                    pass
+            text = min(
+                (candidate for candidate in candidates if len(candidate) >= len(text) * 0.6),
+                key=lambda candidate: (ContentExtractor._mojibake_score(candidate), -len(candidate)),
+                default=text,
+            )
         return text.strip()
+
+    @staticmethod
+    def _mojibake_score(text: str) -> int:
+        markers = ("Ã", "Ä", "Å", "Â", "â", "�")
+        score = sum(text.count(marker) for marker in markers)
+        score += len(re.findall(r"[\u0080-\u009f]", text)) * 3
+        return score
+
+    @staticmethod
+    def _looks_like_error_page(title: str, content: str) -> bool:
+        text = f"{title}\n{content}".lower()
+        title_lower = (title or "").lower()
+        bad_titles = [
+            "web server is returning an unknown error",
+            "origin is unreachable",
+            "just a moment",
+            "attention required",
+            "access denied",
+            "403 forbidden",
+            "404 not found",
+            "502 bad gateway",
+            "503 service unavailable",
+        ]
+        bad_markers = [
+            "error code 520",
+            "error code 521",
+            "error code 522",
+            "error code 523",
+            "cloudflare ray id",
+            "performance & security by cloudflare",
+            "there is an unknown connection issue",
+            "could not reach your host web server",
+            "check your dns settings",
+            "please enable cookies",
+            "verify you are human",
+            "human verification",
+            "captcha challenge",
+            "complete the captcha",
+            "solve captcha",
+        ]
+        if any(marker in title_lower for marker in bad_titles):
+            return True
+        if re.search(r"\berror code\s+\d{3}\b", title_lower):
+            return True
+        return any(marker in text for marker in bad_markers)
 
     @staticmethod
     def _title_from_content(content: str) -> str:
