@@ -297,7 +297,7 @@ class PostgresManager:
                 ) VALUES ($1, $2, $3, $4, $5, $6)
             """,
                 news_id,
-                analysis.get('minio_path') or analysis.get('url'),
+                analysis.get('minio_path') or analysis.get('url') or analysis.get('original_url'),
                 analysis.get('description'),
                 analysis.get('objects', []),
                 analysis.get('sentiment'),

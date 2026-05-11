@@ -27,5 +27,8 @@ class AgentState(TypedDict, total=False):
     _search_results: list
     _searched_queries: list      # Sorgu çeşitleme koruması: daha önce yapılan aramalar
     _searched_query_keys: list
+    _query_queue: list
+    _pending_urls: list
+    _query_plan_initialized: bool
     _search_count: int
     _no_progress_cycles: int

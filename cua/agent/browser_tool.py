@@ -1,75 +1,70 @@
 """
-BrowserTool — browser-use 0.12.x uyumlu versiyon.
+BrowserTool for CUA surface tasks.
 
-browser-use'un kendi ChatOpenAI wrapper'ı kullanılır (langchain değil).
-Her search/extract işlemi için yeni bir Agent oluşturulur.
-Her search/extract işlemi için yeni bir Agent oluşturur.
+The CUA agent keeps a single Playwright browser/page alive for the whole task.
+Search and extraction are mechanical browser actions; LLMs decide query strategy
+and produce analysis, not low-level browser actions.
 """
 import json
 import re
 import os
-import base64
 import xml.etree.ElementTree as ET
 from html import unescape
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
-from cua.config import (
-    CUA_LLM_MAX_COMPLETION_TOKENS,
-    DEFAULT_SEARCH_ENGINE,
-    LMSTUDIO_API_KEY,
-    LMSTUDIO_URL,
-    MODEL_NAME,
-)
-
-
-def _build_default_llm():
-    """browser-use'un native ChatOpenAI ile LM Studio / vLLM bağlantısı."""
-    from browser_use.llm.openai.chat import ChatOpenAI
-    current_url = os.environ.get("LMSTUDIO_URL", LMSTUDIO_URL)
-    return ChatOpenAI(
-        model=MODEL_NAME,
-        base_url=current_url,
-        api_key=LMSTUDIO_API_KEY,
-        temperature=0.2,
-        timeout=200.0,
-        max_retries=2,
-        max_completion_tokens=CUA_LLM_MAX_COMPLETION_TOKENS,
-    )
+from cua.config import DEFAULT_SEARCH_ENGINE
 
 
 class BrowserTool:
-    """
-    browser-use Agent tabanlı web gezinme aracı (v0.11.x ve v0.12.x uyumlu).
-
-    Her search() / extract_page() çağrısı:
-      1. browser-use Agent oluşturur
-      2. Görevi doğal dil olarak verir
-      3. agent.run() → result.final_result() okur
-      4. JSON parse eder
-    """
+    """Single-session browser tool for search and article extraction."""
 
     def __init__(self, llm=None, headless: bool = True):
         self._llm = llm
         self.headless = headless
         self._initialized = False
+        self._playwright = None
         self._browser = None
+        self._context = None
+        self._page = None
+        self._last_search_url = ""
 
     async def initialize(self):
-        """browser-use'un import edilebilir olduğunu doğrula."""
+        """Start one browser session for the task/node lifetime."""
+        if self._initialized:
+            return
+
         try:
-            from browser_use import Agent, Browser
-            if self._llm is None:
-                self._llm = _build_default_llm()
-            
-            self._browser = None
-            print(f"[BrowserTool] browser-use hazır (Headless: {self.headless})")
+            from playwright.async_api import async_playwright
+
+            self._playwright = await async_playwright().start()
+            self._browser = await self._playwright.chromium.launch(
+                headless=self.headless,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-setuid-sandbox",
+                    "--disable-blink-features=AutomationControlled",
+                ] + (["--start-maximized"] if not self.headless else []),
+            )
+            self._context = await self._browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent=(
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+                ),
+                locale="en-US",
+            )
+            self._page = await self._context.new_page()
+            self._page.set_default_timeout(15000)
+            self._page.set_default_navigation_timeout(45000)
+            print(f"[BrowserTool] Playwright hazır (Headless: {self.headless})")
             self._initialized = True
         except ImportError as e:
             raise RuntimeError(
-                f"browser-use yüklü değil veya import hatası: {e}\n"
-                "`uv pip install browser-use` komutunu çalıştır."
+                f"playwright yüklü değil veya import hatası: {e}\n"
+                "`python -m playwright install chromium --with-deps` komutunu çalıştır."
             )
 
     async def __aenter__(self):
@@ -79,142 +74,51 @@ class BrowserTool:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
 
-    def _agent(self, task: str, max_steps: int = 15):
-        """Verilen task için browser-use Agent döndürür."""
-        from browser_use import Agent
-        # llm_timeout / step_timeout browser-use 0.11.x'te desteklenmez
-        return Agent(
-            task=task,
-            llm=self._llm,
-            browser=self._new_browser(),
-            max_steps=max_steps,
-            use_vision=True,
-            vision_detail_level="high",
-        )
-
-    def _new_browser(self):
-        """Create a fresh browser session for each browser-use Agent run."""
-        from browser_use import Browser
-
-        args = [
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-setuid-sandbox",
-        ] + (["--start-maximized"] if not self.headless else [])
-
-        try:
-            return Browser(
-                headless=self.headless,
-                disable_security=True,
-                args=args,
-                keep_alive=False,
-            )
-        except TypeError:
-            from browser_use.browser.browser import BrowserConfig
-
-            config = BrowserConfig(
-                headless=self.headless,
-                disable_security=True,
-                extra_chromium_args=args,
-            )
-            return Browser(config=config)
+    async def _ensure_page(self):
+        if not self._initialized or self._page is None:
+            await self.initialize()
+        return self._page
 
     # ------------------------------------------------------------------
-    # Arama
+    # Search
     # ------------------------------------------------------------------
 
     async def search(
         self, query: str, num_results: int = 8, engine: str = None
     ) -> List[Dict[str, str]]:
-        """Search according to engine policy.
-
-        duckduckgo uses visible/browser-use navigation when headless is false.
-        auto keeps HTTP/RSS fallback available for unattended runs.
-        """
-        engine = engine or DEFAULT_SEARCH_ENGINE
-        engine = engine.lower()
+        """Search according to engine policy."""
+        engine = (engine or DEFAULT_SEARCH_ENGINE).lower()
         if engine == "bing":
             return await self.search_bing(query, num_results)
         if engine == "auto":
             results = await self.search_duckduckgo(query, num_results)
             if results:
                 return results
-
             print(f"[BrowserTool] DDG 0 sonuç, DDG HTTP deneniyor: {query}")
             results = await self.search_duckduckgo_http(query, num_results)
             if results:
                 return results
-
             print(f"[BrowserTool] DDG HTTP 0 sonuç, Bing RSS'e geçiliyor: {query}")
             return await self.search_bing(query, num_results)
-
         return await self.search_duckduckgo(query, num_results)
 
     async def search_google(
         self, query: str, num_results: int = 8
     ) -> List[Dict[str, str]]:
-        """Google yerine DDG'den başla — CAPTCHA riski yok."""
         print(f"[BrowserTool] Search (DDG): {query}")
         return await self.search_duckduckgo(query, num_results)
 
     async def search_duckduckgo(
         self, query: str, num_results: int = 8
     ) -> List[Dict[str, str]]:
+        """Visible deterministic DDG search on the persistent page."""
         print(f"[BrowserTool] DuckDuckGo: {query}")
-        return await self._playwright_duckduckgo_search(query, num_results)
-
-    async def search_duckduckgo_agent(
-        self, query: str, num_results: int = 8
-    ) -> List[Dict[str, str]]:
-        """Legacy browser-use search path. Kept for debugging, not default."""
-        encoded = query.replace(" ", "+")
-        task = (
-            f"Your FIRST browser action MUST be navigate to https://duckduckgo.com/?q={encoded}.\n"
-            f"Do not wait before navigating. After navigating, wait at most once for 3 seconds.\n"
-            f"DO NOT go to Google, Bing or any other search engine.\n"
-            f"If you see a CAPTCHA, human verification, empty page, or anti-bot challenge, stop immediately and return [] only.\n"
-            f"Do not try to solve CAPTCHA. Do not keep waiting after the page is still empty.\n"
-            f"Collect the first {num_results} organic NEWS ARTICLE result links (skip ads, DDG internal links, encyclopedias, statistics pages, and country profile pages).\n"
-            f"IMPORTANT: You MUST return ONLY a valid JSON array, nothing else:\n"
-            f'[{{"title":"...","url":"https://...","snippet":"..."}}]'
-        )
-        return await self._run_search(task, query)
-
-    async def _playwright_duckduckgo_search(
-        self, query: str, num_results: int = 8
-    ) -> List[Dict[str, str]]:
-        """Visible, deterministic DuckDuckGo browser search.
-
-        browser-use can decide to wait on about:blank before navigating. Search is
-        a bounded tool action, so drive navigation directly and keep LLM agency
-        for query choice, URL choice, extraction and synthesis.
-        """
-        from playwright.async_api import async_playwright
-
-        browser = None
-        playwright = None
+        page = await self._ensure_page()
         try:
-            playwright = await async_playwright().start()
-            browser = await playwright.chromium.launch(
-                headless=self.headless,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-setuid-sandbox",
-                    "--disable-blink-features=AutomationControlled",
-                ],
-            )
-            page = await browser.new_page(
-                viewport={"width": 1920, "height": 1080},
-                user_agent=(
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
-                ),
-                locale="en-US",
-            )
             url = f"https://duckduckgo.com/?q={quote_plus(query)}&ia=web"
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(3000)
+            self._last_search_url = url
+            await page.goto(url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2500)
 
             body_text = (await page.locator("body").inner_text(timeout=5000)).lower()
             if self._looks_like_captcha(body_text):
@@ -244,17 +148,6 @@ class BrowserTool:
         except Exception as e:
             print(f"[BrowserTool] DuckDuckGo Playwright search error ({query}): {e}")
             return []
-        finally:
-            if browser:
-                try:
-                    await browser.close()
-                except Exception:
-                    pass
-            if playwright:
-                try:
-                    await playwright.stop()
-                except Exception:
-                    pass
 
     async def search_duckduckgo_http(
         self, query: str, num_results: int = 8
@@ -285,6 +178,320 @@ class BrowserTool:
             print(f"[BrowserTool] Bing RSS search error ({query}): {e}")
             return []
 
+    # ------------------------------------------------------------------
+    # Article extraction
+    # ------------------------------------------------------------------
+
+    async def extract_page(self, url: str) -> Dict[str, Any]:
+        """Visit URL on the persistent page and extract article data."""
+        print(f"[BrowserTool] Extract: {url}")
+        page = await self._ensure_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2000)
+            await self._dismiss_common_popups(page)
+            await page.evaluate("window.scrollTo(0, Math.min(document.body.scrollHeight, 2400))")
+            await page.wait_for_timeout(800)
+
+            data = await page.evaluate(
+                """() => {
+                    const clean = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+                    const meta = (name) => {
+                        const el = document.querySelector(`meta[property="${name}"], meta[name="${name}"]`);
+                        return el ? el.getAttribute('content') || '' : '';
+                    };
+                    const title =
+                        clean(meta('og:title')) ||
+                        clean(document.querySelector('h1')?.innerText) ||
+                        clean(document.title);
+                    const description =
+                        clean(meta('og:description')) ||
+                        clean(meta('description')) ||
+                        clean(document.querySelector('article p, main p, p')?.innerText);
+                    const articleRoot =
+                        document.querySelector('article') ||
+                        document.querySelector('main') ||
+                        document.querySelector('[class*="article"], [class*="content"], [class*="post"]') ||
+                        document.body;
+                    const paragraphs = Array.from(articleRoot.querySelectorAll('p, h2, h3'))
+                        .map((el) => clean(el.innerText))
+                        .filter((text) => text.length > 40);
+                    let content = paragraphs.join('\\n\\n');
+                    if (content.length < 200) {
+                        content = clean(articleRoot.innerText || document.body.innerText || '');
+                    }
+                    const imageCandidates = Array.from(document.images).map((img) => {
+                        const rect = img.getBoundingClientRect();
+                        const parent = img.closest('figure, article, section, div') || img.parentElement;
+                        return {
+                            url: img.currentSrc || img.src || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || '',
+                            alt: img.getAttribute('alt') || '',
+                            title: img.getAttribute('title') || '',
+                            width: Math.round(rect.width || img.naturalWidth || 0),
+                            height: Math.round(rect.height || img.naturalHeight || 0),
+                            natural_width: img.naturalWidth || 0,
+                            natural_height: img.naturalHeight || 0,
+                            class_name: img.className || '',
+                            near_text: clean(parent?.innerText || '').slice(0, 300)
+                        };
+                    }).filter((img) => img.url && /^https?:/.test(img.url));
+                    const articleLinks = Array.from(document.querySelectorAll('a[href]')).map((a) => {
+                        const href = a.href || '';
+                        const text = clean(a.innerText || a.getAttribute('aria-label') || '');
+                        return { title: text, url: href, snippet: text };
+                    }).filter((a) => a.url.startsWith('http') && a.title.length > 12);
+                    return {
+                        title,
+                        content,
+                        description,
+                        main_image: meta('og:image') || meta('twitter:image') || '',
+                        image_candidates: imageCandidates,
+                        article_links: articleLinks,
+                        paragraph_count: paragraphs.length,
+                        body_text: clean(document.body.innerText || '').slice(0, 12000)
+                    };
+                }"""
+            )
+
+            media = self._select_media(data)
+            article_links = self._extract_article_links(data.get("article_links", []), url)
+            is_article = self._looks_like_article_page(data, article_links)
+            result = {
+                "url": url,
+                "title": self._repair_text(data.get("title", "")),
+                "content": self._repair_text(data.get("content", ""))[:50_000],
+                "description": self._repair_text(data.get("description", "")),
+                "media": media,
+                "article_links": article_links,
+                "is_article": is_article,
+                "timestamp": datetime.now().isoformat(),
+            }
+            return result
+        except Exception as e:
+            print(f"[BrowserTool] Extract hatası ({url}): {e}")
+            return {"url": url, "error": str(e)}
+        finally:
+            await self._return_to_search_page()
+
+    async def _return_to_search_page(self):
+        if not self._last_search_url:
+            return
+        try:
+            page = await self._ensure_page()
+            if page.url != self._last_search_url:
+                await page.goto(self._last_search_url, wait_until="domcontentloaded", timeout=20000)
+                await page.wait_for_timeout(500)
+        except Exception as e:
+            print(f"[BrowserTool] Search sayfasına dönülemedi: {e}")
+
+    # ------------------------------------------------------------------
+    # Media selection - mirrors crawler image filtering
+    # ------------------------------------------------------------------
+
+    def _select_media(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        main_image = self._clean_image_url(data.get("main_image", ""))
+        if main_image and self._is_blocked_image_type(main_image):
+            main_image = ""
+
+        image_versions: Dict[str, Dict[str, Any]] = {}
+        for img in data.get("image_candidates", []):
+            src = self._clean_image_url(img.get("url", ""))
+            if not self._is_valid_content_image(src, img):
+                continue
+
+            normalized = self._normalize_image_url(src)
+            width, height = self._image_dimensions(img)
+            importance = width * height
+            if importance < 2500:
+                continue
+
+            existing = image_versions.get(normalized)
+            if not existing or importance > existing["importance"]:
+                image_versions[normalized] = {
+                    "url": src,
+                    "importance": importance,
+                    "width": width,
+                    "height": height,
+                }
+
+        main_normalized = self._normalize_image_url(main_image) if main_image else ""
+        content_images = []
+        for normalized, img_data in sorted(
+            image_versions.items(),
+            key=lambda item: item[1]["importance"],
+            reverse=True,
+        ):
+            if main_normalized and normalized == main_normalized:
+                continue
+            content_images.append(img_data["url"])
+            if len(content_images) >= 3:
+                break
+
+        if not main_image and content_images:
+            main_image = content_images.pop(0)
+
+        return {
+            "main_image": main_image or "",
+            "content_images": content_images,
+            "videos": [],
+        }
+
+    def _is_valid_content_image(self, img_url: str, img_data: Dict[str, Any] = None) -> bool:
+        if not img_url or len(img_url) < 20:
+            return False
+
+        img_lower = img_url.lower()
+        if self._is_blocked_image_type(img_lower):
+            return False
+
+        blocked_keywords = [
+            "logo", "icon", "avatar", "sprite", "emoji",
+            "banner", "ad-", "advert", "promo",
+            "button", "arrow", "play", "pause",
+            "thumb", "thumbnail", "-thumb.",
+            "placeholder", "loading", "spinner",
+            "facebook", "twitter", "social", "share",
+            "pixel", "tracker", "1x1",
+            "header", "footer", "menu", "nav",
+            "flag", "comment-input",
+        ]
+        if any(keyword in img_lower for keyword in blocked_keywords):
+            return False
+
+        if img_data:
+            text = " ".join([
+                str(img_data.get("alt", "")),
+                str(img_data.get("title", "")),
+                str(img_data.get("class_name", "")),
+            ]).lower()
+            if any(keyword in text for keyword in blocked_keywords):
+                return False
+
+        if "bbc.co" in img_lower and any(f"/{size}/" in img_url for size in ["80", "100", "240"]):
+            return False
+
+        return True
+
+    def _is_blocked_image_type(self, img_url: str) -> bool:
+        img_lower = (img_url or "").lower()
+        return any(ext in img_lower for ext in [".svg", ".gif", ".ico", "data:image/svg"])
+
+    def _image_dimensions(self, img_data: Dict[str, Any]) -> tuple[int, int]:
+        for width_key, height_key in [("width", "height"), ("natural_width", "natural_height")]:
+            try:
+                width = int(img_data.get(width_key) or 0)
+                height = int(img_data.get(height_key) or 0)
+                if width > 0 and height > 0:
+                    return width, height
+            except (ValueError, TypeError):
+                continue
+        return 0, 0
+
+    def _normalize_image_url(self, img_url: str) -> str:
+        base_url = (img_url or "").split("?", 1)[0]
+        normalized = re.sub(r"/\d{2,4}/", "/", base_url)
+        normalized = re.sub(
+            r"[-_](thumb|small|medium|large|full|\d+x\d+)\.(jpg|jpeg|png|webp)",
+            r".\2",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        return normalized
+
+    def _clean_image_url(self, url: str) -> str:
+        url = unescape((url or "").strip())
+        if url.startswith("//"):
+            url = "https:" + url
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return ""
+        return url
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    async def _dismiss_common_popups(self, page):
+        labels = [
+            "Accept", "I Accept", "Accept All", "Agree", "OK",
+            "Got it", "Allow all", "Reject all", "Continue",
+        ]
+        for label in labels:
+            try:
+                button = page.get_by_role("button", name=re.compile(label, re.I)).first
+                if await button.count():
+                    await button.click(timeout=1500)
+                    await page.wait_for_timeout(300)
+                    return
+            except Exception:
+                continue
+
+    def _looks_like_captcha(self, text: str) -> bool:
+        lowered = (text or "").lower()
+        markers = [
+            "captcha",
+            "select all squares",
+            "verify you are human",
+            "unusual traffic",
+            "anomaly detected",
+            "are you a robot",
+        ]
+        return any(marker in lowered for marker in markers)
+
+    def _looks_like_article_page(self, data: Dict[str, Any], article_links: List[Dict[str, str]]) -> bool:
+        title = (data.get("title") or "").strip()
+        content = (data.get("content") or "").strip()
+        paragraph_count = int(data.get("paragraph_count") or 0)
+        if not title or len(content) < 250 or paragraph_count < 2:
+            return False
+        if len(article_links) >= 8 and paragraph_count <= 3:
+            return False
+        return True
+
+    def _extract_article_links(self, links: List[Dict[str, str]], current_url: str) -> List[Dict[str, str]]:
+        current_host = urlparse(current_url).netloc.lower().removeprefix("www.")
+        processed = []
+        seen = set()
+        for link in links:
+            url = self._clean_result_url(link.get("url", ""))
+            if not url or url.rstrip("/") == current_url.rstrip("/"):
+                continue
+            host = urlparse(url).netloc.lower().removeprefix("www.")
+            if current_host and host != current_host:
+                continue
+            if not self._looks_like_article_url(url):
+                continue
+            key = self.canonicalize_url(url)
+            if key in seen:
+                continue
+            seen.add(key)
+            processed.append({
+                "title": self._repair_text(link.get("title", ""))[:200],
+                "url": url,
+                "snippet": self._repair_text(link.get("snippet", ""))[:400],
+            })
+            if len(processed) >= 12:
+                break
+        return processed
+
+    def _looks_like_article_url(self, url: str) -> bool:
+        path = urlparse(url).path.lower()
+        if not path or path in {"/", ""}:
+            return False
+        blocked = [
+            "/tag/", "/tags/", "/category/", "/categories/", "/topic/", "/topics/",
+            "/author/", "/authors/", "/search", "/video/", "/videos/", "/gallery/",
+            "/photo/", "/photos/", "/live", "/weather", "/privacy", "/about",
+        ]
+        if any(part in path for part in blocked):
+            return False
+        return len([part for part in path.split("/") if part]) >= 2 or bool(re.search(r"\d{4,}", path))
+
+    @staticmethod
+    def canonicalize_url(url: str) -> str:
+        parsed = urlparse(url)
+        return parsed._replace(query="", fragment="").geturl().rstrip("/")
+
     async def _fetch_text(self, url: str) -> str:
         import aiohttp
 
@@ -301,16 +508,6 @@ class BrowserTool:
             async with session.get(url, allow_redirects=True) as response:
                 response.raise_for_status()
                 return await response.text(errors="ignore")
-
-    def _looks_like_captcha(self, text: str) -> bool:
-        lowered = (text or "").lower()
-        return any(marker in lowered for marker in [
-            "captcha",
-            "challenge",
-            "select all squares",
-            "anomaly",
-            "verify you are human",
-        ])
 
     def _parse_duckduckgo_html(self, html: str) -> List[Dict[str, str]]:
         items = []
@@ -387,7 +584,7 @@ class BrowserTool:
         seen = set()
         for item in items:
             url = item.get("url", "")
-            key = url.split("#", 1)[0].rstrip("/")
+            key = self.canonicalize_url(url)
             if not key or key in seen:
                 continue
             seen.add(key)
@@ -396,104 +593,18 @@ class BrowserTool:
                 break
         return deduped
 
-    async def _run_search(self, task: str, query: str) -> List[Dict[str, str]]:
-        try:
-            agent  = self._agent(task, max_steps=8)
-            result = await agent.run()
-            raw    = result.final_result() or ""
-            cleaned = self._sanitize_encoding(raw)
-            return self._parse_search_results(cleaned)
-        except Exception as e:
-            print(f"[BrowserTool] Arama hatası ({query}): {e}")
-            return []
-
-    def _sanitize_encoding(self, text: str) -> str:
-        """
-        vLLM / Qwen tokenizer kaynaklı encoding bozulmalarını temizler.
-        Örnek: T_rkiye → Türkiye, b_y_me → büyüme
-        Strateji: escape sequence'leri decode etmeyi dene, çözemezsen olduğu gibi bırak.
-        """
-        if not text:
-            return text
-        # \n kaçışlarını gerçek newline'a çevir (bazen model escape eder)
-        try:
-            text = text.encode('utf-8').decode('unicode_escape')
-        except Exception:
-            pass
-        # Bozuk JSON escape'leri düzelt (\' → ')
-        text = text.replace("\\'", "'").replace("\\\\", "\\")
-        return text
-
-    def _parse_search_results(self, raw: str) -> List[Dict[str, str]]:
-        """JSON veya numaralı liste formatını parse eder."""
-        if not (raw or "").strip():
-            return []
-
-        # --- 1. Deneme: JSON array (greedy — tüm array'i yakala) ---
-        match = re.search(r"\[\s*\{[\s\S]*\}\s*\]", raw)
-        if match:
-            try:
-                items = json.loads(match.group())
-                if isinstance(items, list) and items:
-                    return self._process_items(items)
-            except json.JSONDecodeError:
-                pass
-
-        # --- 2. Deneme: \n kaçışlı JSON (agent bazen \n ile kaçırır) ---
-        escaped_match = re.search(r"\\n\[\\n", raw)
-        if escaped_match:
-            try:
-                unescaped = raw.encode('utf-8').decode('unicode_escape')
-                inner = re.search(r"\[\s*\{[\s\S]*\}\s*\]", unescaped)
-                if inner:
-                    items = json.loads(inner.group())
-                    if isinstance(items, list) and items:
-                        return self._process_items(items)
-            except Exception:
-                pass
-
-        # --- 3. Deneme: Tek JSON objesi ---
-        match = re.search(r"\{[\s\S]*?\}", raw)
-        if match:
-            try:
-                item = json.loads(match.group())
-                if "url" in item:
-                    return self._process_items([item])
-            except json.JSONDecodeError:
-                pass
-
-        # --- 4. Deneme: Numaralı liste ("1. Title: ...\n   URL: ...\n   Snippet: ...") ---
-        items = []
-        blocks = re.split(r"\n?\d+\.\s+", raw)
-        for block in blocks[1:]:  # ilk boş bloğu atla
-            title_m   = re.search(r"Title:\s*(.+)", block)
-            url_m     = re.search(r"URL:\s*(https?://\S+)", block)
-            snippet_m = re.search(r"Snippet:\s*(.+)", block, re.DOTALL)
-            if url_m:
-                items.append({
-                    "title":   (title_m.group(1).strip()   if title_m   else ""),
-                    "url":     url_m.group(1).strip(),
-                    "snippet": (snippet_m.group(1).strip() if snippet_m else "")[:300],
-                })
-        if items:
-            return self._process_items(items)
-
-        print(f"[BrowserTool] Sonuç parse hatası (Raw: {raw[:200]}...)")
-        return []
-
     def _process_items(self, items: List[Any]) -> List[Dict[str, str]]:
         result = []
-        for i in items:
-            if not isinstance(i, dict):
+        for item in items:
+            if not isinstance(item, dict):
                 continue
-            url = str(i.get("url", "")).strip()
-            # Hallucinated / çok uzun URL'leri filtrele
-            if not url.startswith("http") or len(url) > 300:
+            url = self._clean_result_url(str(item.get("url", "")).strip())
+            if not url or len(url) > 500:
                 continue
             result.append({
-                "title":   str(i.get("title",   ""))[:200],
-                "url":     url,
-                "snippet": str(i.get("snippet", i.get("description", "")))[:400],
+                "title": self._repair_text(str(item.get("title", "")))[:200],
+                "url": url,
+                "snippet": self._repair_text(str(item.get("snippet", item.get("description", ""))))[:400],
             })
         return result
 
@@ -501,7 +612,6 @@ class BrowserTool:
     def filter_excluded_domains(
         items: List[Dict[str, str]], excluded_domains: List[str]
     ) -> List[Dict[str, str]]:
-        """Filter results whose host matches a crawler-owned domain."""
         if not excluded_domains:
             return items
 
@@ -513,115 +623,47 @@ class BrowserTool:
             filtered.append(item)
         return filtered
 
-
-    # ------------------------------------------------------------------
-    # Sayfa içeriği
-    # ------------------------------------------------------------------
-
-    async def extract_page(self, url: str) -> Dict[str, Any]:
-        """URL'yi ziyaret et, makale içeriğini çıkar."""
-        print(f"[BrowserTool] Extract: {url}")
-
-        task = (
-            f"Go to: {url}\n"
-            f"Extract article information and return as JSON:\n"
-            f"- title: page/article title\n"
-            f"- content: full article text (minimum 200 chars)\n"
-            f"- description: meta description or first paragraph\n"
-            f"- main_image: URL of the primary image\n"
-            f"- images: list of image URLs in the article (max 5)\n"
-            f"If you see a captcha or cookie consent, dismiss it first.\n"
-            f"Return ONLY valid JSON with fields: title, content, description, main_image, images"
-        )
-
-        try:
-            agent  = self._agent(task, max_steps=8)
-            result = await agent.run()
-            raw    = result.final_result() or ""
-            return self._parse_page(raw, url)
-        except Exception as e:
-            print(f"[BrowserTool] Extract hatası ({url}): {e}")
-            return {"url": url, "error": str(e)}
-
-    def _parse_page(self, raw: str, url: str) -> Dict[str, Any]:
-        match = re.search(r"\{[\s\S]*\}", raw)
-        if match:
+    def _repair_text(self, text: str) -> str:
+        if not text:
+            return ""
+        text = text.replace("\\'", "'").replace("\\\\", "\\")
+        mojibake_markers = ("Ã", "Ä", "Å", "â", "Â")
+        if any(marker in text for marker in mojibake_markers):
             try:
-                data = json.loads(match.group())
-                return {
-                    "url":         url,
-                    "title":       data.get("title", ""),
-                    "content":     data.get("content", ""),
-                    "description": data.get("description", ""),
-                    "media": {
-                        "main_image":    data.get("main_image", ""),
-                        "content_images": data.get("images", []),
-                        "videos":        [],
-                    },
-                    "timestamp": datetime.now().isoformat(),
-                }
-            except json.JSONDecodeError:
+                repaired = text.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
+                if repaired and len(repaired) >= len(text) * 0.6:
+                    text = repaired
+            except Exception:
                 pass
-        # Fallback: raw text
-        return {
-            "url":         url,
-            "title":       "",
-            "content":     raw[:10_000],
-            "description": "",
-            "media":       {"main_image": "", "content_images": [], "videos": []},
-            "timestamp":   datetime.now().isoformat(),
-        }
-
-    # ------------------------------------------------------------------
-    # Vision / CAPTCHA
-    # ------------------------------------------------------------------
+        return text.strip()
 
     async def take_screenshot(self) -> Optional[bytes]:
-        """Return current browser screenshot bytes when browser-use exposes a session."""
         try:
-            target = self._browser
-            if target is None:
-                return None
-
-            session = getattr(target, "browser_session", target)
-            if hasattr(session, "take_screenshot"):
-                return await session.take_screenshot(full_page=False)
-
-            if hasattr(session, "get_browser_state_summary"):
-                state = await session.get_browser_state_summary(include_screenshot=True)
-                if state.screenshot:
-                    return base64.b64decode(state.screenshot)
+            page = await self._ensure_page()
+            return await page.screenshot(full_page=False)
         except Exception as e:
             print(f"[BrowserTool] Screenshot hatası: {e}")
             return None
-        return None
-
-    async def solve_captcha_with_vision(
-        self, url: str, screenshot_bytes: bytes = None
-    ) -> Dict[str, Any]:
-        """Captcha varsa browser-use agent'a çözdür."""
-        task = (
-            f"Go to {url}\n"
-            f"If there is a CAPTCHA or cookie consent, solve/dismiss it.\n"
-            f"Then extract: title, content, main_image as JSON."
-        )
-        try:
-            agent  = self._agent(task, max_steps=15)
-            result = await agent.run()
-            raw    = result.final_result() or ""
-            return self._parse_page(raw, url)
-        except Exception as e:
-            return {"url": url, "error": f"captcha_failed: {e}"}
 
     async def close(self):
-        """Tarayıcıyı ve oluşturulan kaynakları kapatır."""
+        if self._context:
+            try:
+                await self._context.close()
+            except Exception as e:
+                print(f"[BrowserTool] Context kapatılırken hata: {e}")
         if self._browser:
             try:
                 await self._browser.close()
             except Exception as e:
                 print(f"[BrowserTool] Browser kapatılırken hata: {e}")
-            finally:
-                self._browser = None
-        
-        # httpx vs. gibi arka planda askıda kalan kısımlar için
+        if self._playwright:
+            try:
+                await self._playwright.stop()
+            except Exception as e:
+                print(f"[BrowserTool] Playwright kapatılırken hata: {e}")
+        self._context = None
+        self._browser = None
+        self._playwright = None
+        self._page = None
+        self._initialized = False
         print("[BrowserTool] Kapatıldı")

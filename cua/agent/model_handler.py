@@ -12,6 +12,8 @@ NEDEN browser-use.ChatOpenAI?
 """
 import json
 import re
+import os
+import base64
 from typing import Dict, Any, Optional
 
 # ---------------------------------------------------------------------------
@@ -27,6 +29,8 @@ except ImportError:
 from cua.agent.state import AgentState
 from cua.config import (
     CUA_LLM_MAX_COMPLETION_TOKENS,
+    CUA_MAX_IMAGES_PER_ARTICLE,
+    CUA_MAX_QUERY_PLAN,
     CUA_PIPELINE_MAX_NEW_TOKENS,
     CUA_SYNTHESIS_MAX_TOKENS,
     LMSTUDIO_API_KEY,
@@ -196,6 +200,24 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _extract_json_array(text: str) -> Optional[list]:
+    """Pull the first JSON array out of an LLM response."""
+    text = (text or "").strip()
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, list) else None
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"\[[\s\S]*\]", text)
+    if match:
+        try:
+            parsed = json.loads(match.group())
+            return parsed if isinstance(parsed, list) else None
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Main handler
 # ---------------------------------------------------------------------------
@@ -237,6 +259,7 @@ class CUAModelHandler:
             import os
             # Ensure LMSTUDIO_URL is dynamically read just in case
             current_url = os.environ.get("LMSTUDIO_URL", LMSTUDIO_URL)
+            self._openai_base_url = current_url
             print(f"[ModelHandler] Test connection to: {current_url}")
             
             _raw_client = OpenAI(base_url=current_url, api_key=LMSTUDIO_API_KEY)
@@ -261,6 +284,7 @@ class CUAModelHandler:
             traceback.print_exc()
             self.llm = None
             self._lmstudio_model = MODEL_NAME
+            self._openai_base_url = os.environ.get("LMSTUDIO_URL", LMSTUDIO_URL)
 
 
     def _init_transformers(self):
@@ -331,6 +355,229 @@ class CUAModelHandler:
         except Exception as e:
             print(f"[ModelHandler] _call_lmstudio error: {e}")
             return ""
+
+    async def generate_query_plan(self, state: AgentState, count: int = CUA_MAX_QUERY_PLAN) -> list[str]:
+        """Generate a bounded list of search queries for the task."""
+        base_query = state.get("query", state.get("topic", ""))
+        collected = state.get("collected_articles", [])
+        recent = "\n".join(
+            f"- {a.get('title', '')}: {a.get('content', '')[:180]}"
+            for a in collected[-3:]
+        )
+        prompt = f"""Generate {count} diverse web search queries for collecting news articles.
+
+Topic: {base_query}
+Already collected:
+{recent or "(none)"}
+
+Rules:
+- Keep every query directly related to the topic.
+- Vary wording, sources, and subtopics.
+- Do not include generic one-word queries.
+- Return ONLY a JSON array of strings."""
+        try:
+            raw = await self._call_llm(prompt, max_tokens=512)
+            items = _extract_json_array(raw) or []
+            queries = self._normalize_query_list(items, base_query, count)
+            if queries:
+                print(f"[ModelHandler] Query plan: {queries}")
+                return queries
+            print(f"[ModelHandler] Query plan parse failed, raw='{raw[:200]}'")
+        except Exception as e:
+            print(f"[ModelHandler] generate_query_plan error: {e}")
+
+        from cua.agent.search_strategy import SearchStrategy
+        fallback = []
+        for cycle in range(max(count, 3)):
+            fallback.extend(SearchStrategy.generate_queries(base_query, "surface", collected, cycle, ""))
+        return self._normalize_query_list(fallback, base_query, count)
+
+    def _normalize_query_list(self, items: list, base_query: str, count: int) -> list[str]:
+        queries = [base_query]
+        queries.extend(str(item).strip() for item in items if str(item).strip())
+        unique = []
+        seen = set()
+        for query in queries:
+            normalized = re.sub(r"\s+", " ", query.lower()).strip()
+            if len(normalized) < 4 or normalized in seen:
+                continue
+            if base_query and not any(part in normalized for part in base_query.lower().split()[:2]):
+                continue
+            seen.add(normalized)
+            unique.append(query)
+            if len(unique) >= count:
+                break
+        return unique
+
+    async def analyze_article(self, article: Dict[str, Any]) -> Dict[str, Any]:
+        """Attach CUA inline LLM/VLM analysis in existing pipeline shapes."""
+        article["llm_analysis"] = {
+            "result": await self.analyze_article_text(article)
+        }
+
+        images = []
+        media = article.get("media", {}) or {}
+        if media.get("main_image"):
+            images.append(media["main_image"])
+        images.extend(media.get("content_images", []))
+
+        vlm_results = []
+        for image_url in images[:CUA_MAX_IMAGES_PER_ARTICLE]:
+            vlm_results.append(await self.analyze_image_url(image_url, article))
+        article["vlm_analysis"] = {"results": vlm_results}
+        return article
+
+    async def analyze_article_text(self, article: Dict[str, Any]) -> Dict[str, Any]:
+        prompt = f"""You are a news analysis assistant specialized in sentiment classification.
+
+Analyze this news article and respond ONLY with valid JSON:
+{{
+  "summary": "2-3 sentence summary of the article",
+  "sentiment": -1,
+  "sentiment_label": "negative",
+  "keywords": ["keyword1", "keyword2", "keyword3"],
+  "entities": {{
+    "countries": ["Country1"],
+    "organizations": ["Org1"],
+    "people": ["Person1"]
+  }},
+  "category": "politics/economy/sports/technology/other",
+  "relevance_to_topic": "high/medium/low"
+}}
+
+Sentiment scoring:
+- 1 = Positive
+- 0 = Neutral
+- -1 = Negative
+
+Title: {article.get('title', '')}
+Topic/query: {article.get('keyword_found', '')}
+Content:
+{article.get('content', '')[:5000]}"""
+        try:
+            raw = await self._call_llm(prompt, max_tokens=900)
+            parsed = _extract_json(raw)
+            if parsed:
+                return self._normalize_llm_analysis(parsed)
+            print(f"[ModelHandler] Article analysis parse failed, raw='{raw[:200]}'")
+        except Exception as e:
+            print(f"[ModelHandler] analyze_article_text error: {e}")
+        return self._fallback_llm_analysis(article)
+
+    async def analyze_image_url(self, image_url: str, article: Dict[str, Any]) -> Dict[str, Any]:
+        result_base = {
+            "minio_path": None,
+            "original_url": image_url,
+            "description": "",
+            "objects": [],
+            "sentiment": "neutral",
+            "relevance": "low",
+        }
+        try:
+            from openai import AsyncOpenAI
+
+            data_url = await self._image_url_to_data_url(image_url)
+            client = AsyncOpenAI(
+                base_url=getattr(self, "_openai_base_url", os.environ.get("LMSTUDIO_URL", LMSTUDIO_URL)),
+                api_key=LMSTUDIO_API_KEY,
+            )
+            prompt = f"""Analyze this news image in the context of the article.
+
+Return ONLY valid JSON:
+{{
+  "description": "Brief factual description",
+  "objects": ["detected", "objects"],
+  "sentiment": "positive/negative/neutral",
+  "relevance": "high/medium/low"
+}}
+
+Article title: {article.get('title', '')}
+Article context: {article.get('content', '')[:800]}"""
+            response = await client.chat.completions.create(
+                model=getattr(self, "_lmstudio_model", MODEL_NAME),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    }
+                ],
+                max_tokens=500,
+                temperature=0.2,
+            )
+            content = response.choices[0].message.content or ""
+            parsed = _extract_json(content)
+            if parsed:
+                result_base.update({
+                    "description": str(parsed.get("description", ""))[:1000],
+                    "objects": parsed.get("objects", []) if isinstance(parsed.get("objects", []), list) else [],
+                    "sentiment": self._normalize_label(parsed.get("sentiment"), {"positive", "negative", "neutral"}, "neutral"),
+                    "relevance": self._normalize_label(parsed.get("relevance"), {"high", "medium", "low"}, "medium"),
+                })
+                return result_base
+            result_base["error"] = f"image analysis parse failed: {content[:160]}"
+            return result_base
+        except Exception as e:
+            result_base["error"] = str(e)
+            return result_base
+
+    async def _image_url_to_data_url(self, image_url: str) -> str:
+        import aiohttp
+
+        headers = {"User-Agent": "Mozilla/5.0"}
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "image/jpeg").split(";", 1)[0]
+                image_bytes = await response.read()
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        return f"data:{content_type};base64,{encoded}"
+
+    def _normalize_llm_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            sentiment = int(data.get("sentiment", 0))
+        except (TypeError, ValueError):
+            sentiment = 0
+        sentiment = max(-1, min(1, sentiment))
+        label = data.get("sentiment_label")
+        if label not in {"positive", "negative", "neutral"}:
+            label = {1: "positive", 0: "neutral", -1: "negative"}[sentiment]
+        return {
+            "summary": str(data.get("summary", ""))[:1000],
+            "sentiment": sentiment,
+            "sentiment_label": label,
+            "keywords": data.get("keywords", []) if isinstance(data.get("keywords", []), list) else [],
+            "entities": data.get("entities", {}) if isinstance(data.get("entities", {}), dict) else {},
+            "category": str(data.get("category", "other")),
+            "relevance_to_topic": self._normalize_label(data.get("relevance_to_topic"), {"high", "medium", "low"}, "medium"),
+        }
+
+    def _fallback_llm_analysis(self, article: Dict[str, Any]) -> Dict[str, Any]:
+        words = re.findall(r"[A-Za-z][A-Za-z0-9-]{4,}", article.get("content", ""))
+        keywords = []
+        seen = set()
+        for word in words:
+            lowered = word.lower()
+            if lowered not in seen:
+                seen.add(lowered)
+                keywords.append(word)
+            if len(keywords) >= 5:
+                break
+        return {
+            "summary": (article.get("description") or article.get("content", ""))[:500],
+            "sentiment": 0,
+            "sentiment_label": "neutral",
+            "keywords": keywords,
+            "entities": {"countries": [], "organizations": [], "people": []},
+            "category": "other",
+            "relevance_to_topic": "medium",
+        }
+
+    def _normalize_label(self, value: Any, allowed: set[str], default: str) -> str:
+        value = str(value or "").lower().strip()
+        return value if value in allowed else default
 
 
     def _call_pipeline(self, prompt: str, max_tokens: int) -> str:

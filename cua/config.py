@@ -25,6 +25,8 @@ MODEL_NAME  = os.getenv("MODEL_NAME", "Qwen/Qwen3.5-9B-Instruct")
 CUA_LLM_MAX_COMPLETION_TOKENS = int(os.getenv("CUA_LLM_MAX_COMPLETION_TOKENS", "8192"))
 CUA_PIPELINE_MAX_NEW_TOKENS   = int(os.getenv("CUA_PIPELINE_MAX_NEW_TOKENS", "4096"))
 CUA_SYNTHESIS_MAX_TOKENS      = int(os.getenv("CUA_SYNTHESIS_MAX_TOKENS", "8192"))
+CUA_MAX_IMAGES_PER_ARTICLE    = int(os.getenv("CUA_MAX_IMAGES_PER_ARTICLE", "3"))
+CUA_MAX_QUERY_PLAN            = int(os.getenv("CUA_MAX_QUERY_PLAN", "10"))
 
 # LM Studio / vLLM endpoint (Vast.ai'da: http://localhost:8000/v1)
 LMSTUDIO_URL = os.getenv("LMSTUDIO_URL", "http://localhost:8000/v1")

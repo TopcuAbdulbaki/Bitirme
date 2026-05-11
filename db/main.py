@@ -247,11 +247,23 @@ class DBNode:
                 continue
             article['source_type'] = article.get('source_type') or 'agent_surface'
             article['mission_id'] = article.get('mission_id') or mission_id
-            _, is_duplicate = await self.postgres.insert_news(article)
+            news_id, is_duplicate = await self.postgres.insert_news(article)
             if is_duplicate:
                 duplicates += 1
             else:
                 inserted += 1
+
+            vlm_results = (article.get('vlm_analysis') or {}).get('results') or []
+            valid_vlm_results = [r for r in vlm_results if isinstance(r, dict) and not r.get('error')]
+            if valid_vlm_results:
+                for result in valid_vlm_results:
+                    await self.postgres.save_vlm_analysis(news_id, result)
+                await self.postgres.mark_vlm_processed(news_id)
+
+            llm_result = (article.get('llm_analysis') or {}).get('result')
+            if isinstance(llm_result, dict) and not llm_result.get('error'):
+                await self.postgres.save_llm_analysis(news_id, llm_result)
+                await self.postgres.mark_llm_processed(news_id)
 
         print(
             f"[DB Node] Stored CUA surface articles: "

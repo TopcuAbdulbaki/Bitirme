@@ -12,6 +12,7 @@ from cua.agent.model_handler import CUAModelHandler
 from cua.agent.content_extractor import ContentExtractor
 from cua.agent.search_strategy import SearchStrategy
 from cua.config import (
+    CUA_MAX_QUERY_PLAN,
     SEARCH_DELAY_SECONDS,
     SURFACE_EXCLUDED_DOMAINS,
     SURFACE_BLOCKED_DOMAINS,
@@ -164,6 +165,49 @@ def _terminal_status(state: AgentState) -> str:
     return "complete"
 
 
+def _canonical_url(url: str) -> str:
+    return BrowserTool.canonicalize_url(url)
+
+
+def _known_url_keys(state: AgentState) -> set[str]:
+    urls = state.get("visited_urls", []) + state.get("exclude_urls", [])
+    urls.extend(item.get("url", "") for item in state.get("_pending_urls", []))
+    return {_canonical_url(url) for url in urls if url}
+
+
+def _add_pending_urls(state: AgentState, items: list[dict], limit: int = 12) -> int:
+    excluded_domains = state.get("exclude_domains", SURFACE_EXCLUDED_DOMAINS) + SURFACE_BLOCKED_DOMAINS
+    items = BrowserTool.filter_excluded_domains(items, excluded_domains)
+    known = _known_url_keys(state)
+    pending = state.get("_pending_urls", [])
+    added = 0
+    for item in items:
+        url = item.get("url", "")
+        key = _canonical_url(url)
+        if not url or not key or key in known:
+            continue
+        pending.append(item)
+        known.add(key)
+        added += 1
+        if added >= limit:
+            break
+    state["_pending_urls"] = pending
+    return added
+
+
+def _pop_pending_url(state: AgentState) -> str:
+    pending = state.get("_pending_urls", [])
+    visited = {_canonical_url(url) for url in state.get("visited_urls", [])}
+    while pending:
+        item = pending.pop(0)
+        url = item.get("url", "")
+        if url and _canonical_url(url) not in visited:
+            state["_pending_urls"] = pending
+            return url
+    state["_pending_urls"] = []
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Async node factory functions
 # ---------------------------------------------------------------------------
@@ -184,8 +228,45 @@ def make_plan_node(ctx: GraphContext):
             state["_last_action"]  = {"action": "complete"}
             return state
 
-        # LLM'e sor: ne yapılacak?
-        decision = await ctx.model.plan_next_action(state)
+        if len(state.get("collected_articles", [])) >= int(_params(state).get("max_articles", 10)):
+            state["should_stop"] = True
+            state["_last_action"] = {"action": "complete"}
+            return state
+
+        pending_url = _pop_pending_url(state)
+        if pending_url:
+            decision = {"action": "visit", "url": pending_url}
+            state["_last_action"] = decision
+            state["cycle_count"] = cycle + 1
+            print(f"[Graph] Plan [{cycle+1}]: {decision}")
+            return state
+
+        queue = state.get("_query_queue", [])
+        if not queue:
+            count = CUA_MAX_QUERY_PLAN if not state.get("_query_plan_initialized") else 3
+            queue = await ctx.model.generate_query_plan(state, count=count)
+            state["_query_plan_initialized"] = True
+
+        searched = set(state.get("_searched_query_keys", []))
+        base_query = state.get("query", state.get("topic", ""))
+        query, query_key = "", ""
+        while queue:
+            candidate = queue.pop(0)
+            key = _normalize_query(candidate)
+            if key and key not in searched and not _query_too_weak(candidate, base_query):
+                query, query_key = candidate, key
+                break
+
+        state["_query_queue"] = queue
+        if not query:
+            query, query_key = _choose_search_query(state, base_query)
+        if not query:
+            state["error"] = "no usable search query left"
+            state["should_stop"] = True
+            state["_last_action"] = {"action": "complete"}
+            return state
+
+        decision = {"action": "search", "query": query, "query_key": query_key}
         state["_last_action"]  = decision
         state["cycle_count"]   = cycle + 1
         print(f"[Graph] Plan [{cycle+1}]: {decision}")
@@ -207,10 +288,8 @@ def make_execute_node(ctx: GraphContext):
 
         # ── SEARCH ──────────────────────────────────────────────
         if action.get("action") == "search":
-            query, query_key = _choose_search_query(
-                state,
-                action.get("query", state.get("query", state.get("topic", ""))),
-            )
+            query = action.get("query", state.get("query", state.get("topic", "")))
+            query_key = action.get("query_key") or _normalize_query(query)
             if not query:
                 state["error"] = "no usable search query left"
                 state["should_stop"] = True
@@ -227,52 +306,28 @@ def make_execute_node(ctx: GraphContext):
             )
             excluded = state.get("exclude_domains", SURFACE_EXCLUDED_DOMAINS) + SURFACE_BLOCKED_DOMAINS
             results = ctx.browser.filter_excluded_domains(results, excluded)
-            visited  = set(state.get("visited_urls", []))
-            excluded_urls = set(state.get("exclude_urls", []))
+            known = _known_url_keys(state)
             new_urls = [
                 r for r in results
-                if r.get("url") and r["url"] not in visited and r["url"] not in excluded_urls
+                if r.get("url") and _canonical_url(r["url"]) not in known
             ]
             state["_search_results"] = new_urls
-            print(f"[Graph] Search '{query}': {len(new_urls)} yeni sonuç")
-
-            # Surface modda ilk uygun sonucu hemen çek
-            progress = False
-            for result in new_urls[:3]:
-                url       = result["url"]
-                page_data = await ctx.browser.extract_page(url)
-
-                visited_list = state.get("visited_urls", [])
-                if url not in visited_list:
-                    visited_list.append(url)
-                    state["visited_urls"] = visited_list
-
-                if page_data.get("requires_vision"):
-                    page_data = await ctx.browser.solve_captcha_with_vision(
-                        url, page_data.get("screenshot_bytes", b"")
-                    )
-
-                if not page_data.get("error"):
-                    article = ContentExtractor.extract_from_raw(page_data, search_keywords=query)
-                    if ContentExtractor.is_valid_article(article):
-                        articles = state.get("collected_articles", [])
-                        articles.append(article)
-                        state["collected_articles"] = articles
-                        progress = True
-                        print(f"[Graph] Makale eklendi: {article.get('title','')[:60]}")
-                        break  # her döngüde 1 makale yeter
-
-            state["_no_progress_cycles"] = 0 if progress else state.get("_no_progress_cycles", 0) + 1
+            added = _add_pending_urls(state, new_urls)
+            print(f"[Graph] Search '{query}': {added} yeni URL kuyruğa eklendi")
+            state["_no_progress_cycles"] = 0 if added else state.get("_no_progress_cycles", 0) + 1
 
         # ── VISIT ───────────────────────────────────────────────
         elif action.get("action") == "visit":
             url      = action.get("url", "")
             visited  = state.get("visited_urls", [])
 
-            if url and url not in visited:
+            visited_keys = {_canonical_url(item) for item in visited}
+            excluded_keys = {_canonical_url(item) for item in state.get("exclude_urls", [])}
+            url_key = _canonical_url(url)
+            if url and url_key not in visited_keys:
                 excluded = state.get("exclude_domains", SURFACE_EXCLUDED_DOMAINS) + SURFACE_BLOCKED_DOMAINS
                 allowed = ctx.browser.filter_excluded_domains([{"url": url}], excluded)
-                if not allowed or url in set(state.get("exclude_urls", [])):
+                if not allowed or url_key in excluded_keys:
                     print(f"[Graph] Surface mode skipped excluded URL/domain: {url}")
                     state["_no_progress_cycles"] = state.get("_no_progress_cycles", 0) + 1
                     return state
@@ -281,20 +336,26 @@ def make_execute_node(ctx: GraphContext):
                 visited.append(url)
                 state["visited_urls"] = visited
 
-                if page_data.get("requires_vision"):
-                    page_data = await ctx.browser.solve_captcha_with_vision(
-                        url, page_data.get("screenshot_bytes", b"")
-                    )
-
+                progress = False
                 if not page_data.get("error"):
-                    article = ContentExtractor.extract_from_raw(
-                        page_data,
-                        search_keywords=state.get("query", state.get("topic", ""))
-                    )
-                    if ContentExtractor.is_valid_article(article):
-                        articles = state.get("collected_articles", [])
-                        articles.append(article)
-                        state["collected_articles"] = articles
+                    if not page_data.get("is_article") and page_data.get("article_links"):
+                        added = _add_pending_urls(state, page_data.get("article_links", []))
+                        progress = added > 0
+                        print(f"[Graph] Category/list page: {added} article link kuyruğa eklendi")
+                    else:
+                        article = ContentExtractor.extract_from_raw(
+                            page_data,
+                            search_keywords=state.get("_searched_queries", [state.get("query", "")])[-1]
+                        )
+                        if ContentExtractor.is_valid_article(article):
+                            article = await ctx.model.analyze_article(article)
+                            articles = state.get("collected_articles", [])
+                            articles.append(article)
+                            state["collected_articles"] = articles
+                            progress = True
+                            print(f"[Graph] Makale eklendi: {article.get('title','')[:60]}")
+
+                    if progress:
                         state["_no_progress_cycles"] = 0
                     else:
                         state["_no_progress_cycles"] = state.get("_no_progress_cycles", 0) + 1
@@ -441,6 +502,9 @@ async def run_agent(task_data: dict, browser: BrowserTool, model: CUAModelHandle
         "error":              None,
         "_searched_queries":  [],   # Sorgu çeşitleme koruma listesi
         "_searched_query_keys": [],
+        "_query_queue":       [],
+        "_pending_urls":      [],
+        "_query_plan_initialized": False,
         "_search_count":      0,
         "_no_progress_cycles": 0,
     }
