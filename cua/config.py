@@ -45,6 +45,17 @@ SURFACE_EXCLUDED_DOMAINS = [
     if d.strip()
 ]
 
+# Surface mode is for news articles, not encyclopedias or generic statistic pages.
+SURFACE_BLOCKED_DOMAINS = [
+    d.strip().lower()
+    for d in os.getenv(
+        "SURFACE_BLOCKED_DOMAINS",
+        "britannica.com,wikipedia.org,wikimedia.org,statisticsoftheworld.com,"
+        "worlddata.info,worldbank.org,imf.org,cia.gov",
+    ).split(",")
+    if d.strip()
+]
+
 # ── Agent Parametreleri ─────────────────────────────────────────────────────
 MAX_ARTICLES_DEFAULT         = int(os.getenv("MAX_ARTICLES", "10"))
 MAX_SEARCHES_DEFAULT         = int(os.getenv("MAX_SEARCHES", "5"))

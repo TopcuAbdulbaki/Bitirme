@@ -15,6 +15,7 @@ from cua.config import (
     RESEARCH_CONFIDENCE_THRESHOLD,
     SEARCH_DELAY_SECONDS,
     SURFACE_EXCLUDED_DOMAINS,
+    SURFACE_BLOCKED_DOMAINS,
 )
 
 
@@ -95,7 +96,7 @@ def make_execute_node(ctx: GraphContext):
 
             results  = await ctx.browser.search(query, num_results=8)
             if mode == "surface":
-                excluded = state.get("exclude_domains", SURFACE_EXCLUDED_DOMAINS)
+                excluded = state.get("exclude_domains", SURFACE_EXCLUDED_DOMAINS) + SURFACE_BLOCKED_DOMAINS
                 results = ctx.browser.filter_excluded_domains(results, excluded)
             visited  = set(state.get("visited_urls", []))
             new_urls = [r for r in results if r.get("url") and r["url"] not in visited]
@@ -132,7 +133,7 @@ def make_execute_node(ctx: GraphContext):
 
             if url and url not in visited:
                 if mode == "surface":
-                    excluded = state.get("exclude_domains", SURFACE_EXCLUDED_DOMAINS)
+                    excluded = state.get("exclude_domains", SURFACE_EXCLUDED_DOMAINS) + SURFACE_BLOCKED_DOMAINS
                     allowed = ctx.browser.filter_excluded_domains([{"url": url}], excluded)
                     if not allowed:
                         print(f"[Graph] Surface mode skipped crawler-owned domain: {url}")

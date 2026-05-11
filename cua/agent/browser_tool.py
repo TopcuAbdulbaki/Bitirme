@@ -146,7 +146,7 @@ class BrowserTool:
             f"Navigate directly to https://duckduckgo.com/?q={encoded} "
             f"and wait for the search results page to load.\n"
             f"DO NOT go to Google, Bing or any other search engine.\n"
-            f"Collect the first {num_results} organic result links (skip ads and DDG internal links).\n"
+            f"Collect the first {num_results} organic NEWS ARTICLE result links (skip ads, DDG internal links, encyclopedias, statistics pages, and country profile pages).\n"
             f"IMPORTANT: You MUST return ONLY a valid JSON array, nothing else:\n"
             f'[{{"title":"...","url":"https://...","snippet":"..."}}]'
         )
@@ -158,7 +158,7 @@ class BrowserTool:
         print(f"[BrowserTool] Bing: {query}")
         task = (
             f"Go to bing.com and search for: {query}\n"
-            f"Collect the first {num_results} result links.\n"
+            f"Collect the first {num_results} organic NEWS ARTICLE result links. Skip ads, encyclopedias, statistics pages, and country profile pages.\n"
             f"Return ONLY a JSON array like: "
             f'[{{"title":"...","url":"...","snippet":"..."}}]'
         )
@@ -166,7 +166,7 @@ class BrowserTool:
 
     async def _run_search(self, task: str, query: str) -> List[Dict[str, str]]:
         try:
-            agent  = self._agent(task, max_steps=12)
+            agent  = self._agent(task, max_steps=8)
             result = await agent.run()
             raw    = result.final_result() or ""
             cleaned = self._sanitize_encoding(raw)
@@ -304,7 +304,7 @@ class BrowserTool:
         )
 
         try:
-            agent  = self._agent(task, max_steps=12)
+            agent  = self._agent(task, max_steps=8)
             result = await agent.run()
             raw    = result.final_result() or ""
             return self._parse_page(raw, url)
