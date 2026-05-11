@@ -396,6 +396,7 @@ Already collected:
 
 Rules:
 - Keep every query directly related to the topic.
+- Keep each query short: 4 to 10 words, natural search-engine style.
 - Vary wording, sources, and subtopics.
 - Do not include generic one-word queries.
 - Return ONLY a JSON array of strings."""
@@ -439,6 +440,7 @@ Rules:
         unique = []
         seen = set()
         for query in queries:
+            query = self._compact_query(query, base_query)
             normalized = re.sub(r"\s+", " ", query.lower()).strip()
             if len(normalized) < 4 or normalized in seen:
                 continue
@@ -449,6 +451,38 @@ Rules:
             if len(unique) >= count:
                 break
         return unique
+
+    def _compact_query(self, query: str, base_query: str) -> str:
+        """Keep model-generated searches usable for web engines."""
+        query = re.sub(r"\s+", " ", str(query or "")).strip(" .,:;")
+        if len(query) <= 120 and len(query.split()) <= 12:
+            return query
+
+        lowered = query.lower()
+        compact_terms = []
+        seen_terms = set()
+        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9-]+", base_query or ""):
+            compact_terms.append(token)
+            seen_terms.add(token.lower())
+        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9-]+", query):
+            low = token.lower()
+            if low in {"analyzing", "covering", "regarding", "published", "implementation", "projected", "scenario"}:
+                continue
+            if low in seen_terms:
+                continue
+            if len(low) <= 2:
+                continue
+            compact_terms.append(token)
+            seen_terms.add(low)
+            if len(compact_terms) >= 8:
+                break
+
+        compact = " ".join(compact_terms).strip()
+        if not compact:
+            compact = base_query
+        if "news" not in compact.lower() and "report" not in compact.lower() and "analysis" not in compact.lower():
+            compact = f"{compact} news"
+        return compact[:120].strip()
 
     async def analyze_article(self, article: Dict[str, Any]) -> Dict[str, Any]:
         """Attach CUA inline LLM/VLM analysis in existing pipeline shapes."""

@@ -695,9 +695,28 @@ class BrowserTool:
         text = text.replace("\\'", "'").replace("\\\\", "\\")
         if self._mojibake_score(text) > 0:
             candidates = [text]
+            replacements = {
+                "â€™": "'",
+                "â€˜": "'",
+                "â€œ": '"',
+                "â€�": '"',
+                "â€“": "-",
+                "â€”": "-",
+                "Â ": " ",
+                "Ţ": "Ş",
+                "ţ": "ş",
+            }
+            repaired = text
+            for bad, good in replacements.items():
+                repaired = repaired.replace(bad, good)
+            candidates.append(repaired)
             for encoding in ("latin1", "cp1252"):
                 try:
                     candidates.append(text.encode(encoding, errors="ignore").decode("utf-8", errors="ignore"))
+                except Exception:
+                    pass
+                try:
+                    candidates.append(repaired.encode(encoding, errors="ignore").decode("utf-8", errors="ignore"))
                 except Exception:
                     pass
             text = min(
@@ -705,6 +724,7 @@ class BrowserTool:
                 key=lambda candidate: (self._mojibake_score(candidate), -len(candidate)),
                 default=text,
             )
+            text = text.replace("Ţ", "Ş").replace("ţ", "ş")
         return text.strip()
 
     @staticmethod

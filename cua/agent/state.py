@@ -33,3 +33,4 @@ class AgentState(TypedDict, total=False):
     _search_count: int
     _no_progress_cycles: int
     _rejected_since_search: int
+    _visited_since_search: int

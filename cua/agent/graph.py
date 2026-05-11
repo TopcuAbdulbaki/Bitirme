@@ -53,7 +53,7 @@ def _max_cycles(state: AgentState) -> int:
 
 def _max_searches(state: AgentState) -> int:
     params = _params(state)
-    default = max(2, int(params.get("max_articles", 5)) * 2)
+    default = max(8, int(params.get("max_articles", 5)) * 4)
     return max(1, int(params.get("max_searches", default)))
 
 
@@ -158,9 +158,12 @@ def _should_search_before_pending(state: AgentState) -> bool:
         return False
     if not state.get("_pending_urls"):
         return False
-    if state.get("_rejected_since_search", 0) >= int(params.get("max_rejections_before_new_search", 3)):
-        return True
-    if len(state.get("_pending_urls", [])) >= int(params.get("max_pending_before_new_search", 12)):
+    min_visits = int(params.get("min_visits_before_new_search", 3))
+    max_rejections = int(params.get("max_rejections_before_new_search", 3))
+    if (
+        state.get("_visited_since_search", 0) >= min_visits
+        and state.get("_rejected_since_search", 0) >= max_rejections
+    ):
         return True
     return False
 
@@ -172,7 +175,7 @@ def _terminal_status(state: AgentState) -> str:
     collected = len(state.get("collected_articles", []))
     if collected >= int(params.get("max_articles", 10)):
         return "max_articles_reached"
-    if state.get("_search_count", 0) >= _max_searches(state):
+    if state.get("_search_count", 0) >= _max_searches(state) and not state.get("_pending_urls"):
         return "max_searches_reached"
     if state.get("cycle_count", 0) >= _max_cycles(state):
         return "max_cycles_reached"
@@ -238,7 +241,7 @@ def make_plan_node(ctx: GraphContext):
             state["_last_action"]  = {"action": "complete"}
             return state
 
-        if state.get("_search_count", 0) >= _max_searches(state):
+        if state.get("_search_count", 0) >= _max_searches(state) and not state.get("_pending_urls"):
             print(f"[Graph] Max searches ({_max_searches(state)}) -> force complete")
             state["should_stop"]   = True
             state["_last_action"]  = {"action": "complete"}
@@ -315,6 +318,7 @@ def make_execute_node(ctx: GraphContext):
             state.setdefault("_searched_query_keys", []).append(query_key)
             state["_search_count"] = state.get("_search_count", 0) + 1
             state["_rejected_since_search"] = 0
+            state["_visited_since_search"] = 0
 
             results  = await ctx.browser.search(
                 query,
@@ -352,6 +356,7 @@ def make_execute_node(ctx: GraphContext):
                 page_data = await ctx.browser.extract_page(url)
                 visited.append(url)
                 state["visited_urls"] = visited
+                state["_visited_since_search"] = state.get("_visited_since_search", 0) + 1
 
                 progress = False
                 if not page_data.get("error"):
@@ -420,7 +425,7 @@ def make_evaluate_node(ctx: GraphContext):
 
         should_stop = (
             collected >= max_articles
-            or searches >= _max_searches(state)
+            or (searches >= _max_searches(state) and not state.get("_pending_urls"))
             or cycles >= _max_cycles(state)
             or no_progress >= max_no_progress
         )
@@ -541,6 +546,7 @@ async def run_agent(task_data: dict, browser: BrowserTool, model: CUAModelHandle
         "_search_count":      0,
         "_no_progress_cycles": 0,
         "_rejected_since_search": 0,
+        "_visited_since_search": 0,
     }
 
     try:
