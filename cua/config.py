@@ -22,9 +22,13 @@ QUEUE_AGENT_RESULTS = "agent_results"
 # MODEL_MODE = "production"  → Qwen3.5-9B via transformers + bitsandbytes
 MODEL_MODE  = os.getenv("MODEL_MODE", "local")
 MODEL_NAME  = os.getenv("MODEL_NAME", "Qwen/Qwen3.5-9B-Instruct")
+CUA_LLM_MAX_COMPLETION_TOKENS = int(os.getenv("CUA_LLM_MAX_COMPLETION_TOKENS", "8192"))
+CUA_PIPELINE_MAX_NEW_TOKENS   = int(os.getenv("CUA_PIPELINE_MAX_NEW_TOKENS", "4096"))
+CUA_SYNTHESIS_MAX_TOKENS      = int(os.getenv("CUA_SYNTHESIS_MAX_TOKENS", "8192"))
 
 # LM Studio / vLLM endpoint (Vast.ai'da: http://localhost:8000/v1)
 LMSTUDIO_URL = os.getenv("LMSTUDIO_URL", "http://localhost:8000/v1")
+LMSTUDIO_API_KEY = os.getenv("LMSTUDIO_API_KEY", os.getenv("VLLM_API_KEY", "lm-studio"))
 
 # ── Browser Ayarları ────────────────────────────────────────────────────────
 # "duckduckgo" | "bing" | "google"  — DDG varsayılan, CAPTCHA yok

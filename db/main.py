@@ -171,6 +171,10 @@ class DBNode:
         try:
             data = json.loads(json_data)
 
+            if data.get('type') == 'agent_surface_articles':
+                await self._process_agent_surface_articles(task_id, data)
+                return
+
             if data.get('type') == 'research_mission':
                 await self._process_research_mission(task_id, data)
                 return
@@ -230,6 +234,29 @@ class DBNode:
             await self.postgres.complete_research_mission(mission_id, report, state)
 
         print(f"[DB Node] Stored research mission: {mission_id}")
+
+    async def _process_agent_surface_articles(self, task_id: str, data: dict):
+        """Store CUA surface output as news rows with source_type=agent_surface."""
+        mission_id = data.get('mission_id') or task_id
+        articles = data.get('articles') or []
+        inserted = 0
+        duplicates = 0
+
+        for article in articles:
+            if not isinstance(article, dict) or not article.get('url'):
+                continue
+            article['source_type'] = article.get('source_type') or 'agent_surface'
+            article['mission_id'] = article.get('mission_id') or mission_id
+            _, is_duplicate = await self.postgres.insert_news(article)
+            if is_duplicate:
+                duplicates += 1
+            else:
+                inserted += 1
+
+        print(
+            f"[DB Node] Stored CUA surface articles: "
+            f"mission_id={mission_id}, inserted={inserted}, duplicates={duplicates}"
+        )
     
     async def shutdown(self):
         """Shutdown all connections."""

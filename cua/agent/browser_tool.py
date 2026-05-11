@@ -13,7 +13,13 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from urllib.parse import urlparse
 
-from cua.config import DEFAULT_SEARCH_ENGINE, LMSTUDIO_URL, MODEL_NAME
+from cua.config import (
+    CUA_LLM_MAX_COMPLETION_TOKENS,
+    DEFAULT_SEARCH_ENGINE,
+    LMSTUDIO_API_KEY,
+    LMSTUDIO_URL,
+    MODEL_NAME,
+)
 
 
 def _build_default_llm():
@@ -23,10 +29,11 @@ def _build_default_llm():
     return ChatOpenAI(
         model=MODEL_NAME,
         base_url=current_url,
-        api_key="lm-studio",
+        api_key=LMSTUDIO_API_KEY,
         temperature=0.2,
         timeout=200.0,
-        max_retries=2
+        max_retries=2,
+        max_completion_tokens=CUA_LLM_MAX_COMPLETION_TOKENS,
     )
 
 
@@ -44,7 +51,6 @@ class BrowserTool:
     def __init__(self, llm=None, headless: bool = True):
         self._llm = llm
         self.headless = headless
-        self.visited_urls: set = set()
         self._initialized = False
         self._browser = None
 
@@ -285,10 +291,6 @@ class BrowserTool:
 
     async def extract_page(self, url: str) -> Dict[str, Any]:
         """URL'yi ziyaret et, makale içeriğini çıkar."""
-        if url in self.visited_urls:
-            return {"url": url, "error": "already_visited"}
-
-        self.visited_urls.add(url)
         print(f"[BrowserTool] Extract: {url}")
 
         task = (

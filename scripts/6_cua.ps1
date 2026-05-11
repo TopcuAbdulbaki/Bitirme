@@ -1,72 +1,80 @@
-# CUA (Computer Using Agent) Node Deployment Script
-# Deploys CUA node to Vast.ai or local GPU instances
+# CUA all-in-one Docker deployment script.
+# Builds and runs one container that starts vLLM first, then CUA.
 
 param(
-    [string]$RemoteHost = "localhost",
-    [string]$RemoteUser = "root",
-    [int]$RemotePort = 22,
-    [bool]$UseSSH = $false,
-    [string]$WireGuardIP = "10.0.0.6"
+    [ValidateSet("standalone", "node")]
+    [string]$RunMode = "standalone",
+    [string]$ImageName = "abdulbakitopcu/cua-allinone:latest",
+    [string]$ContainerName = "cua-allinone",
+    [string]$ModelId = "Qwen/Qwen3.5-9B",
+    [int]$VllmPort = 1234,
+    [string]$VllmApiKey = "lm-studio",
+    [int]$MaxModelLen = 32768,
+    [double]$GpuMemoryUtilization = 0.92,
+    [int]$TensorParallelSize = 1,
+    [string]$Query = "Turkey economy 2026",
+    [int]$MaxArticles = 3,
+    [int]$MaxCycles = 6,
+    [string]$SearchEngine = "duckduckgo",
+    [string]$OrchestratorHost = "",
+    [int]$OrchestratorPort = 50051,
+    [string]$RabbitMQHost = "",
+    [int]$RabbitMQPort = 5672,
+    [string]$RabbitMQUser = "guest",
+    [string]$RabbitMQPassword = "guest"
 )
 
-Write-Host "[CUA] Starting CUA Node Deployment..." -ForegroundColor Green
+$ErrorActionPreference = "Stop"
 
-# Configuration
-$ORCHESTRATOR_HOST = "orchestrator"  # Internal network
-$ORCHESTRATOR_PORT = 50051
-$CUA_GRPC_PORT = 50054
-$RABBITMQ_HOST = "rabbitmq"
-$MODEL_MODE = "local"  # or "production"
+Write-Host "[CUA] Building all-in-one Docker image..." -ForegroundColor Cyan
+docker build -t $ImageName -f cua/Dockerfile.allinone .
 
-# Docker environment
-$DockerEnv = @(
-    "ORCHESTRATOR_HOST=$ORCHESTRATOR_HOST",
-    "ORCHESTRATOR_PORT=$ORCHESTRATOR_PORT",
-    "CUA_GRPC_PORT=$CUA_GRPC_PORT",
-    "RABBITMQ_HOST=$RABBITMQ_HOST",
-    "RABBITMQ_PORT=5672",
-    "RABBITMQ_USER=guest",
-    "RABBITMQ_PASSWORD=guest",
-    "MODEL_MODE=$MODEL_MODE",
-    "LMSTUDIO_URL=http://lmstudio:1234/v1"
+Write-Host "[CUA] Removing old container if exists..." -ForegroundColor Cyan
+docker rm -f $ContainerName 2>$null | Out-Null
+
+$envArgs = @(
+    "-e", "CUA_RUN_MODE=$RunMode",
+    "-e", "MODEL_ID=$ModelId",
+    "-e", "MODEL_NAME=$ModelId",
+    "-e", "VLLM_PORT=$VllmPort",
+    "-e", "VLLM_API_KEY=$VllmApiKey",
+    "-e", "LMSTUDIO_API_KEY=$VllmApiKey",
+    "-e", "MAX_MODEL_LEN=$MaxModelLen",
+    "-e", "GPU_MEMORY_UTILIZATION=$GpuMemoryUtilization",
+    "-e", "TENSOR_PARALLEL_SIZE=$TensorParallelSize",
+    "-e", "CUA_QUERY=$Query",
+    "-e", "MAX_ARTICLES=$MaxArticles",
+    "-e", "MAX_CYCLES=$MaxCycles",
+    "-e", "SEARCH_ENGINE=$SearchEngine",
+    "-e", "BROWSER_HEADLESS=true"
 )
 
-# Build Docker image
-Write-Host "[CUA] Building Docker image..." -ForegroundColor Cyan
-docker build -t abdulbakitopcu/cua:latest -f cua/Dockerfile .
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[CUA] Build failed!" -ForegroundColor Red
-    exit 1
-}
-
-# Option 1: Local deployment
-if (-not $UseSSH) {
-    Write-Host "[CUA] Starting CUA container locally..." -ForegroundColor Cyan
-    $EnvArgs = $DockerEnv | ForEach-Object { "--env", $_ }
-    docker run `
-        -d `
-        --name cua-node `
-        --network bitirme-net `
-        --gpus all `
-        -p 50054:50054 `
-        @EnvArgs `
-        abdulbakitopcu/cua:latest
-    Write-Host "[CUA] CUA node started locally" -ForegroundColor Green
-}
-# Option 2: Remote SSH deployment
-else {
-    Write-Host "[CUA] Deploying to remote host via SSH..." -ForegroundColor Cyan
-    
-    # Build SSH command for Docker run
-    $DockerRunCmd = "docker run -d --name cua-node --gpus all -p 50054:50054"
-    foreach ($env in $DockerEnv) {
-        $DockerRunCmd += " --env `"$env`""
+if ($RunMode -eq "node") {
+    if (-not $OrchestratorHost -or -not $RabbitMQHost) {
+        throw "Node mode requires -OrchestratorHost and -RabbitMQHost"
     }
-    $DockerRunCmd += " abdulbakitopcu/cua:latest"
-    
-    # Execute on remote
-    ssh -p $RemotePort "${RemoteUser}@${RemoteHost}" $DockerRunCmd
-    Write-Host "[CUA] CUA node deployed to $RemoteHost" -ForegroundColor Green
+    $envArgs += @(
+        "-e", "ORCHESTRATOR_HOST=$OrchestratorHost",
+        "-e", "ORCHESTRATOR_PORT=$OrchestratorPort",
+        "-e", "RABBITMQ_HOST=$RabbitMQHost",
+        "-e", "RABBITMQ_PORT=$RabbitMQPort",
+        "-e", "RABBITMQ_USER=$RabbitMQUser",
+        "-e", "RABBITMQ_PASSWORD=$RabbitMQPassword"
+    )
 }
 
-Write-Host "[CUA] Deployment complete! Node ID: cua_XXXXXXXX (check orchestrator logs)" -ForegroundColor Green
+Write-Host "[CUA] Starting all-in-one container..." -ForegroundColor Cyan
+docker run `
+    -d `
+    --name $ContainerName `
+    --gpus all `
+    --network host `
+    --ipc host `
+    --shm-size 4g `
+    --restart unless-stopped `
+    -v "$env:USERPROFILE\.cache\huggingface:/models" `
+    @envArgs `
+    $ImageName
+
+Write-Host "[CUA] Container started. Logs:" -ForegroundColor Green
+docker logs -f $ContainerName

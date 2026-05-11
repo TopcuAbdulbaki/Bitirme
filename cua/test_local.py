@@ -4,7 +4,6 @@ CUA Standalone Test — Orchestrator/RabbitMQ olmadan direkt çalıştır.
 Kullanım:
     python -m cua.test_local
     python -m cua.test_local --mode surface --query "Türkiye haberleri"
-    python -m cua.test_local --mode research --topic "Türkiye ekonomisi 2026"
     python -m cua.test_local --mode surface --max-articles 3 --headless false
 
 Gereksinimler:
@@ -31,12 +30,12 @@ from cua.agent.graph import run_agent
 def parse_args():
     p = argparse.ArgumentParser(description="CUA Standalone Test")
     p.add_argument("--mode",         default="surface",
-                   choices=["surface", "research"],
-                   help="surface = haber topla, research = derin araştırma")
+                   choices=["surface"],
+                   help="surface = otonom agent haber/veri toplama")
     p.add_argument("--query",        default="Türkiye haberleri",
                    help="Surface mod arama terimi")
     p.add_argument("--topic",        default="",
-                   help="Research mod konusu (boşsa query kullanılır)")
+                   help="Opsiyonel konu etiketi (boşsa query kullanılır)")
     p.add_argument("--max-articles", type=int, default=5,
                    help="Surface modda toplanacak max makale sayısı")
     p.add_argument("--max-cycles",   type=int, default=8,
@@ -83,15 +82,11 @@ async def main():
     query    = args.query
     topic    = args.topic or query
 
-    if mode == "research":
-        print("[Test] Research mode şimdilik askıda. TODO.md içindeki not tamamlanınca yeniden açılacak.")
-        sys.exit(2)
-
     print("=" * 60)
     print("CUA STANDALONE TEST")
     print("=" * 60)
     print(f"  Mod:            {mode}")
-    print(f"  Query/Topic:    {query if mode == 'surface' else topic}")
+    print(f"  Query/Topic:    {query}")
     print(f"  Max makale:     {args.max_articles}")
     print(f"  Max döngü:      {args.max_cycles}")
     print(f"  Tarayıcı:       {'headless' if headless else 'GÖRÜNÜR'}")
@@ -103,11 +98,6 @@ async def main():
     if args.lmstudio_url:
         import os
         os.environ["LMSTUDIO_URL"] = args.lmstudio_url
-
-    # Config override
-    import cua.config as cfg
-    cfg.MAX_RESEARCH_CYCLES = args.max_cycles
-    cfg.DEFAULT_SEARCH_ENGINE = args.engine
 
     # ── Model Handler başlat ─────────────────────────────────────────
     print("\n[Test] Model handler başlatılıyor...")
@@ -139,6 +129,7 @@ async def main():
                     "max_articles": args.max_articles,
                     "max_searches": args.max_articles * 2,
                     "max_cycles": args.max_cycles,
+                    "search_engine": args.engine,
                 },
             }
 
@@ -156,22 +147,15 @@ async def main():
             print("=" * 60)
             print(f"Status: {report.get('status', '?')}")
 
-            if mode == "surface":
-                articles = report.get("articles", report.get("collected_articles", []))
-                print(f"Toplanan makale: {len(articles)}")
-                print(f"Özet: {report.get('summary', '-')}")
-                print("\nMakaleler:")
-                for i, a in enumerate(articles, 1):
-                    print(f"  {i}. [{a.get('source','')}] {a.get('title','')[:80]}")
-                    print(f"     URL: {a.get('url','')}")
-                    print(f"     İçerik ({len(a.get('content',''))} karakter)")
-            else:
-                print(f"Konu:       {report.get('topic', topic)}")
-                print(f"Confidence: {report.get('confidence_score', '?')}")
-                print(f"\nYönetici özeti:\n{report.get('executive_summary', '-')}")
-                print("\nTemel bulgular:")
-                for f in report.get("key_findings", []):
-                    print(f"  • {f}")
+            articles = report.get("articles", report.get("collected_articles", []))
+            print(f"Stop reason: {report.get('stop_reason', '-')}")
+            print(f"Toplanan makale: {len(articles)}")
+            print(f"Özet: {report.get('summary', '-')}")
+            print("\nMakaleler:")
+            for i, a in enumerate(articles, 1):
+                print(f"  {i}. [{a.get('source','')}] {a.get('title','')[:80]}")
+                print(f"     URL: {a.get('url','')}")
+                print(f"     İçerik ({len(a.get('content',''))} karakter)")
 
             # ── Dosyaya kaydet ───────────────────────────────────────────────
             output_file = args.output or f"cua_test_result_{mode}.json"

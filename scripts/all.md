@@ -1,6 +1,6 @@
 # Bitirme Node Kurulum Notlari
 
-Ilk hedef: Vast.ai uzerinde CUA standalone. Bu modda Orchestrator, RabbitMQ ve DB gerekmez; CUA dogrudan browser-use + vLLM ile surface haber toplama testini calistirir.
+Ilk hedef: Vast.ai uzerinde CUA all-in-one. Bu modda vLLM ve CUA ayni Docker container icinde calisir; CUA her zaman `http://127.0.0.1:1234/v1` uzerinden modele baglanir.
 
 ## CUA Standalone - Vast.ai Linux
 
@@ -12,9 +12,63 @@ Vast instance icinde Guacamole desktop varsa sol panel clipboard icin `Ctrl + Al
 ssh root@<VAST_IP> -p <SSH_PORT>
 ```
 
-### 1. Tek komutla indir ve calistir
+### 1. Onerilen: Docker all-in-one indir ve calistir
 
-Repo public oldugu icin token gerekmez. Script repo dosyalarini GitHub'dan ceker, vLLM'i ayri venv'e kurar, Qwen vision modeli servis eder, CUA venv'ini hazirlar ve standalone surface testi calistirir.
+Repo public oldugu icin token gerekmez. Script repo dosyalarini ceker, `cua/Dockerfile.allinone` image'ini build eder, vLLM + CUA'yi tek container icinde baslatir.
+
+```bash
+cd ~
+curl -fsSL -o vast_cua_allinone.sh \
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_cua_allinone.sh
+chmod +x vast_cua_allinone.sh
+./vast_cua_allinone.sh
+```
+
+Iki GPU varsa:
+
+```bash
+TENSOR_PARALLEL_SIZE=2 \
+GPU_MEMORY_UTILIZATION=0.90 \
+./vast_cua_allinone.sh
+```
+
+Orchestrator/RabbitMQ bagli node modu:
+
+```bash
+CUA_RUN_MODE=node \
+ORCHESTRATOR_HOST=<ORCH_IP> \
+RABBITMQ_HOST=<RABBITMQ_IP> \
+./vast_cua_allinone.sh
+```
+
+Log:
+
+```bash
+docker logs -f cua-allinone
+```
+
+### 2. Eski manuel venv yolu
+
+Docker kullanmak istemezsen guarded host script var. Bu script once host'u kontrol eder (`nvidia-smi`, driver CUDA capability, GPU count, compute capability, Python 3.9-3.12), sonra vLLM'i ayri venv'e kurar, vLLM'i gercekten baslatip `/v1/models` smoke test gecmeden CUA'yi baslatmaz.
+
+```bash
+su - root
+cd ~
+curl -fsSL -o vast_cua_host_guarded.sh \
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_cua_host_guarded.sh
+chmod +x vast_cua_host_guarded.sh
+./vast_cua_host_guarded.sh
+```
+
+Iki GPU varsa:
+
+```bash
+TENSOR_PARALLEL_SIZE=2 \
+GPU_MEMORY_UTILIZATION=0.90 \
+./vast_cua_host_guarded.sh
+```
+
+Repo public oldugu icin token gerekmez. Eski script repo dosyalarini GitHub'dan ceker, vLLM'i ayri venv'e kurar, Qwen vision modeli servis eder, CUA venv'ini hazirlar ve standalone surface testi calistirir.
 
 ```bash
 cd ~
@@ -40,7 +94,7 @@ MAX_MODEL_LEN=32768
 GPU_MEMORY_UTILIZATION=0.92
 ```
 
-### 2. Sorgu/model parametreleriyle calistir
+### 3. Sorgu/model parametreleriyle calistir
 
 ```bash
 CUA_QUERY="Turkey inflation latest news" \
@@ -65,7 +119,7 @@ APP_DIR="$HOME/Bitirme" \
 ./vast_cua_standalone.sh
 ```
 
-### 3. Manuel Linux kurulumu
+### 4. Manuel Linux kurulumu
 
 Script kullanmadan elle yapmak istersen:
 
@@ -145,7 +199,7 @@ python -m cua.test_local \
   --output cua_test_result_surface.json
 ```
 
-### 4. Beklenen cikti
+### 5. Beklenen cikti
 
 Basarili calisinca repo kokunde su dosya olusur:
 
@@ -159,7 +213,7 @@ Kontrol:
 cat ~/Bitirme/cua_test_result_surface.json
 ```
 
-### 5. Siklikla gereken debug komutlari
+### 6. Siklikla gereken debug komutlari
 
 vLLM log:
 

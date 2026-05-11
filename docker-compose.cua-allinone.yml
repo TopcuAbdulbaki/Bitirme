@@ -1,0 +1,45 @@
+services:
+  cua-allinone:
+    build:
+      context: .
+      dockerfile: cua/Dockerfile.allinone
+    image: bitirme-cua-allinone:latest
+    container_name: cua-allinone
+    network_mode: host
+    ipc: host
+    shm_size: "4gb"
+    restart: unless-stopped
+    volumes:
+      - ${MODEL_CACHE_DIR:-/root/.cache/huggingface}:/models
+    environment:
+      CUA_RUN_MODE: ${CUA_RUN_MODE:-standalone}
+      MODEL_ID: ${MODEL_ID:-Qwen/Qwen3.5-9B}
+      MODEL_NAME: ${MODEL_NAME:-Qwen/Qwen3.5-9B}
+      VLLM_PORT: ${VLLM_PORT:-1234}
+      VLLM_API_KEY: ${VLLM_API_KEY:-lm-studio}
+      LMSTUDIO_API_KEY: ${LMSTUDIO_API_KEY:-lm-studio}
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-32768}
+      GPU_MEMORY_UTILIZATION: ${GPU_MEMORY_UTILIZATION:-0.92}
+      TENSOR_PARALLEL_SIZE: ${TENSOR_PARALLEL_SIZE:-1}
+      VLLM_USE_V1: ${VLLM_USE_V1:-0}
+      CUA_QUERY: ${CUA_QUERY:-Turkey economy 2026}
+      MAX_ARTICLES: ${MAX_ARTICLES:-3}
+      MAX_CYCLES: ${MAX_CYCLES:-6}
+      SEARCH_ENGINE: ${SEARCH_ENGINE:-duckduckgo}
+      BROWSER_HEADLESS: ${BROWSER_HEADLESS:-true}
+      CUA_LLM_MAX_COMPLETION_TOKENS: ${CUA_LLM_MAX_COMPLETION_TOKENS:-8192}
+      CUA_SYNTHESIS_MAX_TOKENS: ${CUA_SYNTHESIS_MAX_TOKENS:-8192}
+      CUA_PIPELINE_MAX_NEW_TOKENS: ${CUA_PIPELINE_MAX_NEW_TOKENS:-4096}
+      ORCHESTRATOR_HOST: ${ORCHESTRATOR_HOST:-127.0.0.1}
+      ORCHESTRATOR_PORT: ${ORCHESTRATOR_PORT:-50051}
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-127.0.0.1}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

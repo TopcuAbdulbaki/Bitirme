@@ -217,8 +217,8 @@ class PostgresManager:
             await conn.execute("""
                 INSERT INTO news (
                     news_id, url, source, country, keyword_found,
-                    scraped_at, content, media
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    scraped_at, content, media, source_type, mission_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             """,
                 news_id,
                 url,
@@ -227,7 +227,9 @@ class PostgresManager:
                 news_data.get('keyword_found'),
                 scraped_at,
                 news_data.get('content'),
-                json.dumps(news_data.get('media', {}))
+                json.dumps(news_data.get('media', {})),
+                news_data.get('source_type', 'crawler'),
+                news_data.get('mission_id')
             )
             
             # Generate and store embedding (async in background)

@@ -29,6 +29,7 @@ sudo docker build -f crawler/Dockerfile -t abdulbakitopcu/crawler:latest .
 sudo docker build -f db/Dockerfile -t abdulbakitopcu/db:latest .
 sudo docker build -f vlm/Dockerfile -t abdulbakitopcu/vlm:latest .
 sudo docker build -f llm/Dockerfile -t abdulbakitopcu/llm:latest .
+sudo docker build -f cua/Dockerfile.allinone -t abdulbakitopcu/cua-allinone:latest .
 
 # Push ALL
 sudo docker push abdulbakitopcu/orchestrator:latest
@@ -36,6 +37,7 @@ sudo docker push abdulbakitopcu/crawler:latest
 sudo docker push abdulbakitopcu/db:latest
 sudo docker push abdulbakitopcu/vlm:latest
 sudo docker push abdulbakitopcu/llm:latest
+sudo docker push abdulbakitopcu/cua-allinone:latest
 
 echo "All images pushed!"
 

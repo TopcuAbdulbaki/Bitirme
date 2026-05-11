@@ -25,7 +25,16 @@ except ImportError:
     _BROWSER_USE_LLM_AVAILABLE = False
 
 from cua.agent.state import AgentState
-from cua.config import MODEL_MODE, MODEL_NAME, LMSTUDIO_URL, RESEARCH_CONFIDENCE_THRESHOLD
+from cua.config import (
+    CUA_LLM_MAX_COMPLETION_TOKENS,
+    CUA_PIPELINE_MAX_NEW_TOKENS,
+    CUA_SYNTHESIS_MAX_TOKENS,
+    LMSTUDIO_API_KEY,
+    MODEL_MODE,
+    MODEL_NAME,
+    LMSTUDIO_URL,
+    RESEARCH_CONFIDENCE_THRESHOLD,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +239,7 @@ class CUAModelHandler:
             current_url = os.environ.get("LMSTUDIO_URL", LMSTUDIO_URL)
             print(f"[ModelHandler] Test connection to: {current_url}")
             
-            _raw_client = OpenAI(base_url=current_url, api_key="lm-studio")
+            _raw_client = OpenAI(base_url=current_url, api_key=LMSTUDIO_API_KEY)
             models = _raw_client.models.list()
             model_ids = [m.id for m in models.data]
             print(f"[ModelHandler] LM Studio connected. Models: {model_ids}")
@@ -241,8 +250,9 @@ class CUAModelHandler:
             self.llm = BrowserUseChatOpenAI(
                 model=first_model,
                 base_url=current_url,
-                api_key="lm-studio",
+                api_key=LMSTUDIO_API_KEY,
                 temperature=0.3,
+                max_completion_tokens=CUA_LLM_MAX_COMPLETION_TOKENS,
             )
             print(f"[ModelHandler] browser-use ChatOpenAI hazır (model={first_model})")
         except Exception as e:
@@ -277,7 +287,7 @@ class CUAModelHandler:
                 "text-generation",
                 model=model,
                 tokenizer=self._tokenizer,
-                max_new_tokens=1024,
+                max_new_tokens=CUA_PIPELINE_MAX_NEW_TOKENS,
                 temperature=0.3,
                 do_sample=True,
                 repetition_penalty=1.1,
@@ -296,7 +306,7 @@ class CUAModelHandler:
     # Core inference
     # ------------------------------------------------------------------
 
-    async def _call_llm(self, prompt: str, max_tokens: int = 512) -> str:
+    async def _call_llm(self, prompt: str, max_tokens: int = CUA_LLM_MAX_COMPLETION_TOKENS) -> str:
         """Send prompt to whichever backend is active and return raw text."""
         if self.llm is not None:
             return await self._call_lmstudio(prompt, max_tokens)
@@ -391,7 +401,7 @@ class CUAModelHandler:
         """
         prompt = _build_synthesize_prompt(state)
         try:
-            raw    = await self._call_llm(prompt, max_tokens=1024)
+            raw    = await self._call_llm(prompt, max_tokens=CUA_SYNTHESIS_MAX_TOKENS)
             result = _extract_json(raw)
             if result:
                 print(f"[ModelHandler] Report synthesized ({len(str(result))} chars)")

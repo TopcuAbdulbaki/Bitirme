@@ -188,7 +188,7 @@ class PipelineManager:
         Check for idle CUA node and publish agent task.
         
         Args:
-            keywords: Search keywords for agent research
+            keywords: Search keywords for CUA surface agent task
         
         Returns:
             True if task was published, False otherwise
@@ -209,11 +209,13 @@ class PipelineManager:
         task_id = self.generate_task_id()
         task_data_dict = {
             'task_id': task_id,
-            'mode': 'research',
+            'mode': 'surface',
             'topic': keywords,
             'query': keywords,
             'params': {
-                'max_articles': 10
+                'max_articles': 10,
+                'max_searches': 20,
+                'max_cycles': 12
             },
             'timestamp': datetime.utcnow().isoformat()
         }
@@ -221,7 +223,7 @@ class PipelineManager:
         self._tasks[task_id] = PipelineTask(
             task_id=task_id,
             raw_data=task_data,
-            stage=PipelineStage.AGENT_RESEARCH
+            stage=PipelineStage.AGENT_SURFACE
         )
         
         success = self.rabbitmq.publish_agent_task(task_id, task_data)
@@ -235,7 +237,7 @@ class PipelineManager:
         return False
     
     def on_agent_surface_complete(self, task_id: str, surface_data: str):
-        """Handle agent surface research completion."""
+        """Handle CUA surface agent completion."""
         task = self._tasks.get(task_id)
         if not task:
             print(f"[Pipeline] Unknown task: {task_id}")
@@ -243,7 +245,7 @@ class PipelineManager:
         
         task.stage = PipelineStage.AGENT_SURFACE
         print(f"[Pipeline] {task_id} -> AGENT_SURFACE")
-        self._publish_agent_result_to_db(task_id, surface_data)
+        self._publish_agent_surface_to_db(task_id, surface_data)
     
     def on_agent_research_complete(self, task_id: str, research_data: str):
         """Handle agent research completion."""
@@ -280,6 +282,33 @@ class PipelineManager:
                 print(f"[Pipeline] {task_id} -> Agent result published to DB queue")
         except Exception as e:
             self.on_task_failed(task_id, f"Agent DB publish failed: {e}")
+
+    def _publish_agent_surface_to_db(self, task_id: str, result_data: str):
+        """Publish CUA surface articles to DB as news rows."""
+        if not self.rabbitmq:
+            print("[Pipeline] RabbitMQ not available, cannot store agent surface result")
+            return
+
+        try:
+            result = json.loads(result_data)
+            request = json.loads(self._tasks[task_id].raw_data or "{}")
+            articles = result.get('articles') or result.get('collected_articles') or []
+            db_payload = json.dumps({
+                'type': 'agent_surface_articles',
+                'mission_id': task_id,
+                'topic': request.get('topic') or request.get('query') or result.get('topic') or result.get('query'),
+                'status': str(result.get('status', 'COMPLETED')).lower(),
+                'articles': articles,
+                'report': result,
+                'state': result.get('state', {})
+            })
+            if self.rabbitmq.publish_db_task(task_id, db_payload):
+                self._tasks[task_id].stage = PipelineStage.AGENT_COMPLETE
+                self._tasks[task_id].completed_at = datetime.utcnow()
+                self._release_node_for_task(task_id)
+                print(f"[Pipeline] {task_id} -> Agent surface articles published to DB queue")
+        except Exception as e:
+            self.on_task_failed(task_id, f"Agent surface DB publish failed: {e}")
 
     def _release_node_for_task(self, task_id: str):
         """Mark any node assigned to this task as idle."""

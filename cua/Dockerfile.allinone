@@ -1,0 +1,66 @@
+# CUA all-in-one image.
+# Runs vLLM and CUA in the same container so CUA always talks to localhost:1234.
+
+FROM vllm/vllm-openai:latest
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        libglib2.0-0 \
+        libnss3 \
+        libnspr4 \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libcups2 \
+        libdrm2 \
+        libdbus-1-3 \
+        libexpat1 \
+        libxcb1 \
+        libxkbcommon0 \
+        libx11-6 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxext6 \
+        libxfixes3 \
+        libxrandr2 \
+        libgbm1 \
+        libpango-1.0-0 \
+        libcairo2 \
+        libasound2 \
+        fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY cua/requirements.allinone.txt /app/cua/requirements.allinone.txt
+RUN python3 -m pip install --no-cache-dir -U pip \
+    && python3 -m pip install --no-cache-dir -r /app/cua/requirements.allinone.txt \
+    && python3 -m playwright install chromium --with-deps
+
+COPY . /app
+RUN chmod +x /app/cua/entrypoint_allinone.sh
+
+ENV CUA_RUN_MODE=standalone \
+    MODEL_ID=Qwen/Qwen3.5-9B \
+    MODEL_NAME=Qwen/Qwen3.5-9B \
+    VLLM_PORT=1234 \
+    VLLM_API_KEY=lm-studio \
+    MAX_MODEL_LEN=32768 \
+    GPU_MEMORY_UTILIZATION=0.92 \
+    TENSOR_PARALLEL_SIZE=1 \
+    VLLM_USE_V1=0 \
+    MODEL_MODE=local \
+    BROWSER_HEADLESS=true \
+    SEARCH_ENGINE=duckduckgo \
+    CUA_LLM_MAX_COMPLETION_TOKENS=8192 \
+    CUA_SYNTHESIS_MAX_TOKENS=8192 \
+    CUA_PIPELINE_MAX_NEW_TOKENS=4096
+
+EXPOSE 1234 50054
+
+ENTRYPOINT ["/app/cua/entrypoint_allinone.sh"]

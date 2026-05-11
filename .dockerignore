@@ -15,3 +15,6 @@ toplanan_haberler.json
 build_researchs/
 docs/
 crawler_env/
+temp_browser_use/
+cua/*.log
+cua/cua_test_result_*.json
