@@ -161,6 +161,12 @@ class BrowserTool:
         self, query: str, num_results: int = 8
     ) -> List[Dict[str, str]]:
         print(f"[BrowserTool] DuckDuckGo: {query}")
+        return await self._playwright_duckduckgo_search(query, num_results)
+
+    async def search_duckduckgo_agent(
+        self, query: str, num_results: int = 8
+    ) -> List[Dict[str, str]]:
+        """Legacy browser-use search path. Kept for debugging, not default."""
         encoded = query.replace(" ", "+")
         task = (
             f"Your FIRST browser action MUST be navigate to https://duckduckgo.com/?q={encoded}.\n"
@@ -173,6 +179,82 @@ class BrowserTool:
             f'[{{"title":"...","url":"https://...","snippet":"..."}}]'
         )
         return await self._run_search(task, query)
+
+    async def _playwright_duckduckgo_search(
+        self, query: str, num_results: int = 8
+    ) -> List[Dict[str, str]]:
+        """Visible, deterministic DuckDuckGo browser search.
+
+        browser-use can decide to wait on about:blank before navigating. Search is
+        a bounded tool action, so drive navigation directly and keep LLM agency
+        for query choice, URL choice, extraction and synthesis.
+        """
+        from playwright.async_api import async_playwright
+
+        browser = None
+        playwright = None
+        try:
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.launch(
+                headless=self.headless,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-setuid-sandbox",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+            )
+            page = await browser.new_page(
+                viewport={"width": 1920, "height": 1080},
+                user_agent=(
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+                ),
+                locale="en-US",
+            )
+            url = f"https://duckduckgo.com/?q={quote_plus(query)}&ia=web"
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
+
+            body_text = (await page.locator("body").inner_text(timeout=5000)).lower()
+            if self._looks_like_captcha(body_text):
+                print("[BrowserTool] DuckDuckGo CAPTCHA/challenge detected")
+                return []
+
+            items = await page.evaluate(
+                """(limit) => {
+                    const anchors = Array.from(document.querySelectorAll('a'));
+                    const rows = [];
+                    for (const a of anchors) {
+                        const href = a.href || '';
+                        const title = (a.innerText || '').replace(/\\s+/g, ' ').trim();
+                        if (!href.startsWith('http') || title.length < 8) continue;
+                        const host = new URL(href).hostname.replace(/^www\\./, '');
+                        if (host.includes('duckduckgo.com')) continue;
+                        const container = a.closest('article, div, li') || a.parentElement;
+                        const snippet = container ? (container.innerText || '').replace(/\\s+/g, ' ').trim() : '';
+                        rows.push({ title, url: href, snippet });
+                        if (rows.length >= limit) break;
+                    }
+                    return rows;
+                }""",
+                num_results * 2,
+            )
+            return self._dedupe_results(self._process_items(items), num_results)
+        except Exception as e:
+            print(f"[BrowserTool] DuckDuckGo Playwright search error ({query}): {e}")
+            return []
+        finally:
+            if browser:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+            if playwright:
+                try:
+                    await playwright.stop()
+                except Exception:
+                    pass
 
     async def search_duckduckgo_http(
         self, query: str, num_results: int = 8
