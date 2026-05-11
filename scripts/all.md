@@ -49,7 +49,7 @@ docker logs -f cua-allinone
 
 ### 2. Eski manuel venv yolu
 
-Docker kullanmak istemezsen guarded host script var. Bu script once host'u kontrol eder (`nvidia-smi`, driver CUDA capability, GPU count, compute capability, Python 3.9-3.12), sonra vLLM'i ayri venv'e kurar, vLLM'i gercekten baslatip `/v1/models` smoke test gecmeden CUA'yi baslatmaz.
+Docker kullanmak istemezsen guarded host script var. Bu script once host'u kontrol eder (`nvidia-smi`, driver CUDA capability, GPU count, compute capability, Python 3.9-3.12), sonra guncel vLLM'i ayri venv'e kurar, vLLM'i gercekten baslatip `/v1/models` smoke test gecmeden CUA'yi baslatmaz.
 
 ```bash
 su - root
@@ -66,6 +66,12 @@ Iki GPU varsa:
 TENSOR_PARALLEL_SIZE=2 \
 GPU_MEMORY_UTILIZATION=0.90 \
 ./vast_cua_host_guarded.sh
+```
+
+Vast template 1234 portunu kendi portal/caddy servisi icin kullaniyorsa:
+
+```bash
+VLLM_PORT=1235 ./vast_cua_host_guarded.sh
 ```
 
 Repo public oldugu icin token gerekmez. Eski script repo dosyalarini GitHub'dan ceker, vLLM'i ayri venv'e kurar, Qwen vision modeli servis eder, CUA venv'ini hazirlar ve standalone surface testi calistirir.
@@ -92,6 +98,8 @@ MAX_CYCLES=6
 SEARCH_ENGINE=duckduckgo
 MAX_MODEL_LEN=32768
 GPU_MEMORY_UTILIZATION=0.92
+MIN_CUDA_DRIVER_VERSION=12.8
+VLLM_VERSION=
 ```
 
 ### 3. Sorgu/model parametreleriyle calistir

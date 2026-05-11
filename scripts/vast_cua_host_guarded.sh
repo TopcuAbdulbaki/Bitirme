@@ -12,12 +12,12 @@ VLLM_PORT="${VLLM_PORT:-1234}"
 VLLM_API_KEY="${VLLM_API_KEY:-lm-studio}"
 VLLM_VENV="${VLLM_VENV:-$HOME/.venvs/vllm-cu121}"
 CUA_VENV="${CUA_VENV:-$APP_DIR/cua/.venv}"
-VLLM_VERSION="${VLLM_VERSION:-0.6.6.post1}"
+VLLM_VERSION="${VLLM_VERSION:-}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
-VLLM_USE_V1="${VLLM_USE_V1:-0}"
+VLLM_USE_V1="${VLLM_USE_V1:-1}"
 VLLM_DTYPE="${VLLM_DTYPE:-half}"
 MODEL_DOWNLOAD_DIR="${MODEL_DOWNLOAD_DIR:-$HOME/.cache/huggingface}"
 CUA_RUN_MODE="${CUA_RUN_MODE:-standalone}"
@@ -26,7 +26,7 @@ MAX_ARTICLES="${MAX_ARTICLES:-3}"
 MAX_CYCLES="${MAX_CYCLES:-6}"
 SEARCH_ENGINE="${SEARCH_ENGINE:-duckduckgo}"
 BROWSER_HEADLESS="${BROWSER_HEADLESS:-true}"
-MIN_CUDA_DRIVER_VERSION="${MIN_CUDA_DRIVER_VERSION:-12.1}"
+MIN_CUDA_DRIVER_VERSION="${MIN_CUDA_DRIVER_VERSION:-12.8}"
 MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-7.0}"
 
 log() {
@@ -208,8 +208,13 @@ install_vllm_profile() {
   run "$py" -m venv "$VLLM_VENV"
   # shellcheck disable=SC1091
   source "$VLLM_VENV/bin/activate"
-  run python -m pip install -U pip setuptools wheel packaging
-  run pip install "vllm==${VLLM_VERSION}" "transformers>=4.46.0" accelerate safetensors sentencepiece
+  run python -m pip install -U pip setuptools wheel packaging uv
+  local vllm_package="vllm"
+  if [ -n "$VLLM_VERSION" ]; then
+    vllm_package="vllm==${VLLM_VERSION}"
+  fi
+  run uv pip install --python "$VLLM_VENV/bin/python" --torch-backend=auto --upgrade \
+    "$vllm_package" "transformers>=4.57.0" accelerate safetensors sentencepiece
 
   python - <<'PY'
 import torch
