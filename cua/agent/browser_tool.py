@@ -9,9 +9,11 @@ import json
 import re
 import os
 import base64
+import xml.etree.ElementTree as ET
+from html import unescape
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from cua.config import (
     CUA_LLM_MAX_COMPLETION_TOKENS,
@@ -124,17 +126,29 @@ class BrowserTool:
     async def search(
         self, query: str, num_results: int = 8, engine: str = None
     ) -> List[Dict[str, str]]:
-        """Arama yap, sonuçları döndür. 0 sonuç gelirse Bing'e fallback yapar."""
+        """Search according to engine policy.
+
+        duckduckgo uses visible/browser-use navigation when headless is false.
+        auto keeps HTTP/RSS fallback available for unattended runs.
+        """
         engine = engine or DEFAULT_SEARCH_ENGINE
+        engine = engine.lower()
         if engine == "bing":
             return await self.search_bing(query, num_results)
-        # DDG önce dene (CAPTCHA yok)
-        results = await self.search_duckduckgo(query, num_results)
-        if results:
-            return results
-        # DDG 0 sonuç → Bing fallback
-        print(f"[BrowserTool] DDG 0 sonuç, Bing'e geçiliyor: {query}")
-        return await self.search_bing(query, num_results)
+        if engine == "auto":
+            results = await self.search_duckduckgo(query, num_results)
+            if results:
+                return results
+
+            print(f"[BrowserTool] DDG 0 sonuç, DDG HTTP deneniyor: {query}")
+            results = await self.search_duckduckgo_http(query, num_results)
+            if results:
+                return results
+
+            print(f"[BrowserTool] DDG HTTP 0 sonuç, Bing RSS'e geçiliyor: {query}")
+            return await self.search_bing(query, num_results)
+
+        return await self.search_duckduckgo(query, num_results)
 
     async def search_google(
         self, query: str, num_results: int = 8
@@ -152,23 +166,153 @@ class BrowserTool:
             f"Navigate directly to https://duckduckgo.com/?q={encoded} "
             f"and wait for the search results page to load.\n"
             f"DO NOT go to Google, Bing or any other search engine.\n"
+            f"If you see a CAPTCHA, human verification, empty page, or anti-bot challenge, stop immediately and return [] only.\n"
+            f"Do not try to solve CAPTCHA. Do not keep waiting after the page is still empty.\n"
             f"Collect the first {num_results} organic NEWS ARTICLE result links (skip ads, DDG internal links, encyclopedias, statistics pages, and country profile pages).\n"
             f"IMPORTANT: You MUST return ONLY a valid JSON array, nothing else:\n"
             f'[{{"title":"...","url":"https://...","snippet":"..."}}]'
         )
         return await self._run_search(task, query)
 
+    async def search_duckduckgo_http(
+        self, query: str, num_results: int = 8
+    ) -> List[Dict[str, str]]:
+        print(f"[BrowserTool] DuckDuckGo HTTP: {query}")
+        try:
+            html = await self._fetch_text(
+                f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+            )
+            if self._looks_like_captcha(html):
+                print("[BrowserTool] DuckDuckGo CAPTCHA/challenge detected, skipping browser retry")
+                return []
+            return self._dedupe_results(self._parse_duckduckgo_html(html), num_results)
+        except Exception as e:
+            print(f"[BrowserTool] DuckDuckGo HTTP search error ({query}): {e}")
+            return []
+
     async def search_bing(
         self, query: str, num_results: int = 8
     ) -> List[Dict[str, str]]:
         print(f"[BrowserTool] Bing: {query}")
-        task = (
-            f"Go to bing.com and search for: {query}\n"
-            f"Collect the first {num_results} organic NEWS ARTICLE result links. Skip ads, encyclopedias, statistics pages, and country profile pages.\n"
-            f"Return ONLY a JSON array like: "
-            f'[{{"title":"...","url":"...","snippet":"..."}}]'
+        try:
+            rss = await self._fetch_text(
+                f"https://www.bing.com/news/search?q={quote_plus(query)}&format=rss"
+            )
+            return self._dedupe_results(self._parse_bing_news_rss(rss), num_results)
+        except Exception as e:
+            print(f"[BrowserTool] Bing RSS search error ({query}): {e}")
+            return []
+
+    async def _fetch_text(self, url: str) -> str:
+        import aiohttp
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9,tr;q=0.8",
+        }
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with session.get(url, allow_redirects=True) as response:
+                response.raise_for_status()
+                return await response.text(errors="ignore")
+
+    def _looks_like_captcha(self, text: str) -> bool:
+        lowered = (text or "").lower()
+        return any(marker in lowered for marker in [
+            "captcha",
+            "challenge",
+            "select all squares",
+            "anomaly",
+            "verify you are human",
+        ])
+
+    def _parse_duckduckgo_html(self, html: str) -> List[Dict[str, str]]:
+        items = []
+        pattern = re.compile(
+            r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+            re.IGNORECASE | re.DOTALL,
         )
-        return await self._run_search(task, query)
+        matches = list(pattern.finditer(html or ""))
+        for idx, match in enumerate(matches):
+            raw_url = unescape(match.group(1))
+            title = self._strip_html(match.group(2))
+            snippet = ""
+            next_start = match.end()
+            next_end = matches[idx + 1].start() if idx + 1 < len(matches) else next_start + 2000
+            block = html[next_start:next_end]
+            snippet_match = re.search(
+                r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>|'
+                r'<div[^>]+class="result__snippet"[^>]*>(.*?)</div>',
+                block,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if snippet_match:
+                snippet = self._strip_html(snippet_match.group(1) or snippet_match.group(2) or "")
+            url = self._clean_result_url(raw_url)
+            if url:
+                items.append({"title": title, "url": url, "snippet": snippet})
+        return self._process_items(items)
+
+    def _parse_bing_news_rss(self, rss: str) -> List[Dict[str, str]]:
+        items = []
+        root = ET.fromstring(rss)
+        for item in root.findall(".//item"):
+            title = item.findtext("title") or ""
+            url = item.findtext("link") or ""
+            snippet = item.findtext("description") or ""
+            cleaned_url = self._clean_result_url(url)
+            if cleaned_url:
+                items.append({
+                    "title": self._strip_html(title),
+                    "url": cleaned_url,
+                    "snippet": self._strip_html(snippet),
+                })
+        return self._process_items(items)
+
+    def _clean_result_url(self, raw_url: str) -> str:
+        url = unescape((raw_url or "").strip())
+        if not url:
+            return ""
+        if url.startswith("//"):
+            url = "https:" + url
+
+        parsed = urlparse(url)
+        if parsed.netloc.endswith("duckduckgo.com") and parsed.path.startswith("/l/"):
+            target = parse_qs(parsed.query).get("uddg", [""])[0]
+            url = unquote(target)
+
+        parsed = urlparse(url)
+        host = parsed.netloc.lower().removeprefix("www.")
+        if parsed.scheme not in {"http", "https"}:
+            return ""
+        if any(domain in host for domain in ["duckduckgo.com", "bing.com", "microsoft.com"]):
+            return ""
+        return url
+
+    def _strip_html(self, text: str) -> str:
+        text = re.sub(r"<script[\s\S]*?</script>", " ", text or "", flags=re.IGNORECASE)
+        text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = unescape(text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _dedupe_results(self, items: List[Dict[str, str]], limit: int) -> List[Dict[str, str]]:
+        deduped = []
+        seen = set()
+        for item in items:
+            url = item.get("url", "")
+            key = url.split("#", 1)[0].rstrip("/")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+            if len(deduped) >= limit:
+                break
+        return deduped
 
     async def _run_search(self, task: str, query: str) -> List[Dict[str, str]]:
         try:
