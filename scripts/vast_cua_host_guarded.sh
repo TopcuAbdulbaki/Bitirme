@@ -14,7 +14,8 @@ VLLM_VENV="${VLLM_VENV:-$HOME/.venvs/vllm-cu128}"
 CUA_VENV="${CUA_VENV:-$APP_DIR/cua/.venv}"
 VLLM_VERSION="${VLLM_VERSION:-0.18.1}"
 VLLM_TORCH_BACKEND="${VLLM_TORCH_BACKEND:-cu128}"
-RESET_VLLM_VENV="${RESET_VLLM_VENV:-true}"
+RESET_VLLM_VENV="${RESET_VLLM_VENV:-false}"
+RESET_CUA_VENV="${RESET_CUA_VENV:-false}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
@@ -163,6 +164,39 @@ ensure_vllm_port_free() {
   fi
 }
 
+existing_vllm_pid_on_port() {
+  local listeners
+  listeners="$(port_listener_pids "$VLLM_PORT" || true)"
+  if [ -z "$listeners" ]; then
+    return 1
+  fi
+
+  awk -v model="$MODEL_ID" '
+    $0 ~ /vllm serve/ && $0 ~ model {
+      print $1
+      exit 0
+    }
+  ' <<< "$listeners"
+}
+
+ensure_vllm_port_available_or_reusable() {
+  local listeners pid
+  listeners="$(port_listener_pids "$VLLM_PORT" || true)"
+  if [ -z "$listeners" ]; then
+    return 0
+  fi
+
+  pid="$(existing_vllm_pid_on_port || true)"
+  if [ -n "$pid" ]; then
+    echo "$pid" > "$HOME/vllm.pid"
+    log "Reusing existing vLLM on port $VLLM_PORT (PID: $pid)"
+    return 2
+  fi
+
+  printf '\n[FAIL] Port %s is already in use by a non-matching process:\n%s\n' "$VLLM_PORT" "$listeners" >&2
+  die "Set VLLM_PORT to a free port, for example: VLLM_PORT=1236 ./vast_cua_host_guarded.sh"
+}
+
 preflight_gpu() {
   command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi not found. Pick a GPU-enabled Vast template/instance."
 
@@ -207,6 +241,22 @@ prepare_repo() {
 
 install_vllm_profile() {
   local py="$1"
+  if [ -x "$VLLM_VENV/bin/python" ] && [ "$RESET_VLLM_VENV" != "true" ]; then
+    if "$VLLM_VENV/bin/python" - <<'PY'
+import torch
+import vllm
+import transformers
+assert torch.cuda.is_available(), "torch.cuda.is_available() is False"
+print(f"Existing vLLM env OK: torch={torch.__version__}, cuda={torch.version.cuda}, vllm={vllm.__version__}, transformers={transformers.__version__}")
+PY
+    then
+      log "Reusing existing vLLM venv: $VLLM_VENV"
+      return
+    fi
+    log "Existing vLLM venv failed validation; reinstalling: $VLLM_VENV"
+    rm -rf "$VLLM_VENV"
+  fi
+
   if [ "$RESET_VLLM_VENV" = "true" ] && [ -d "$VLLM_VENV" ]; then
     log "Removing existing vLLM venv: $VLLM_VENV"
     rm -rf "$VLLM_VENV"
@@ -239,6 +289,30 @@ PY
 prepare_cua_env() {
   local py="$1"
   cd "$APP_DIR"
+  if [ -x "$CUA_VENV/bin/python" ] && [ "$RESET_CUA_VENV" != "true" ]; then
+    if "$CUA_VENV/bin/python" - <<'PY'
+import browser_use
+import langgraph
+import playwright
+import grpc
+import pika
+import aiohttp
+import openai
+print("Existing CUA env OK")
+PY
+    then
+      log "Reusing existing CUA venv: $CUA_VENV"
+      return
+    fi
+    log "Existing CUA venv failed validation; reinstalling: $CUA_VENV"
+    rm -rf "$CUA_VENV"
+  fi
+
+  if [ "$RESET_CUA_VENV" = "true" ] && [ -d "$CUA_VENV" ]; then
+    log "Removing existing CUA venv: $CUA_VENV"
+    rm -rf "$CUA_VENV"
+  fi
+
   run "$py" -m venv "$CUA_VENV"
   # shellcheck disable=SC1091
   source "$CUA_VENV/bin/activate"
@@ -251,11 +325,14 @@ prepare_cua_env() {
 
 start_vllm() {
   mkdir -p "$MODEL_DOWNLOAD_DIR"
-  ensure_vllm_port_free
-  pkill -f "vllm serve" >/dev/null 2>&1 || true
-  pkill -f "vllm.entrypoints.openai.api_server" >/dev/null 2>&1 || true
-  sleep 2
-  ensure_vllm_port_free
+  if ensure_vllm_port_available_or_reusable; then
+    :
+  else
+    local status=$?
+    if [ "$status" -eq 2 ]; then
+      return
+    fi
+  fi
   rm -f "$HOME/vllm.log"
 
   # shellcheck disable=SC1091
