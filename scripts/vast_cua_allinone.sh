@@ -88,10 +88,12 @@ run_container() {
     -e MAX_CYCLES="$MAX_CYCLES"
     -e SEARCH_ENGINE="$SEARCH_ENGINE"
     -e BROWSER_HEADLESS="$BROWSER_HEADLESS"
+    -e CUA_HEALTH_FILE="/tmp/cua_health.json"
   )
 
   if [ "$CUA_RUN_MODE" = "node" ]; then
     args+=(
+      -e CUA_REQUIRE_ORCHESTRATOR=true
       -e ORCHESTRATOR_HOST="${ORCHESTRATOR_HOST:?ORCHESTRATOR_HOST is required for node mode}"
       -e ORCHESTRATOR_PORT="${ORCHESTRATOR_PORT:-50051}"
       -e RABBITMQ_HOST="${RABBITMQ_HOST:?RABBITMQ_HOST is required for node mode}"

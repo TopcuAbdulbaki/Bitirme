@@ -118,6 +118,8 @@ services:
       - MODEL_MODE=local
       - LMSTUDIO_URL=http://172.17.0.1:8000/v1  # Vast.ai host makinesindeki vLLM'e bağlanır
       - BROWSER_HEADLESS=true
+      - CUA_HEALTH_FILE=/tmp/cua_health.json
+      - CUA_REQUIRE_ORCHESTRATOR=true
     shm_size: '2gb'  # KRİTİK: Playwright'ın Docker içinde RAM taşmasından çökmemesi için
     deploy:
       resources:
@@ -131,7 +133,7 @@ services:
     ports:
       - "50054:50054"
     healthcheck:
-      test: ["CMD", "python", "-c", "import grpc; grpc.aio.insecure_channel('localhost:50054')"]
+      test: ["CMD", "python", "-m", "cua.healthcheck"]
       interval: 30s
       timeout: 10s
       retries: 3

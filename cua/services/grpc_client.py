@@ -61,22 +61,29 @@ class GRPCClient:
             print(f"[CUA-gRPC] Kayıt hatası: {e}")
             raise
 
-    async def send_heartbeat(self):
+    async def heartbeat_once(self) -> bool:
+        """Send a single heartbeat. Returns True when acknowledged."""
+        if not self.node_id or not self.stub:
+            return False
+        try:
+            from cua.generated import orchestrator_pb2
+            req = orchestrator_pb2.HeartbeatRequest(
+                node_id=self.node_id,
+                status=self.status,
+            )
+            resp = await self.stub.Heartbeat(req)
+            if not resp.acknowledged:
+                print("[CUA-gRPC] Heartbeat kabul edilmedi")
+            return bool(resp.acknowledged)
+        except Exception as e:
+            print(f"[CUA-gRPC] Heartbeat hatası: {e}")
+            return False
+
+    async def send_heartbeat(self, should_run=None, interval: float = 10):
         """Orchestrator'a periyodik heartbeat gönder."""
-        while True:
-            try:
-                if self.node_id and self.stub:
-                    from cua.generated import orchestrator_pb2
-                    req  = orchestrator_pb2.HeartbeatRequest(
-                        node_id=self.node_id,
-                        status=self.status,
-                    )
-                    resp = await self.stub.Heartbeat(req)
-                    if not resp.acknowledged:
-                        print("[CUA-gRPC] Heartbeat kabul edilmedi")
-            except Exception as e:
-                print(f"[CUA-gRPC] Heartbeat hatası: {e}")
-            await asyncio.sleep(10)
+        while should_run() if should_run else True:
+            await self.heartbeat_once()
+            await asyncio.sleep(interval)
 
     async def close(self):
         """gRPC kanalını kapat."""

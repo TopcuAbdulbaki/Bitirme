@@ -103,11 +103,13 @@ ENV ORCHESTRATOR_HOST=orchestrator \
     MODEL_MODE=local \
     LMSTUDIO_URL=http://host.docker.internal:1234/v1 \
     CUA_GRPC_PORT=50054 \
+    CUA_HEALTH_FILE=/tmp/cua_health.json \
+    CUA_REQUIRE_ORCHESTRATOR=true \
     PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 
 # Sağlık kontrolü
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import pika, grpc; print('OK')" || exit 1
+    CMD python -m cua.healthcheck || exit 1
 
 # Başlat
 CMD ["python", "-m", "cua.main"]

@@ -8,6 +8,7 @@ load_dotenv()
 ORCHESTRATOR_HOST = os.getenv("ORCHESTRATOR_HOST", "localhost")
 ORCHESTRATOR_PORT = int(os.getenv("ORCHESTRATOR_PORT", "50051"))
 CUA_GRPC_PORT     = int(os.getenv("CUA_GRPC_PORT", "50054"))
+CUA_HEALTH_FILE   = os.getenv("CUA_HEALTH_FILE", "/tmp/cua_health.json")
 
 # ── RabbitMQ ────────────────────────────────────────────────────────────────
 RABBITMQ_HOST     = os.getenv("RABBITMQ_HOST", "localhost")
