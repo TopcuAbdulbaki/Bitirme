@@ -101,7 +101,7 @@ install_system_packages() {
     log "apt-get update"
     as_root apt-get update
     log "apt-get install base packages"
-    as_root apt-get install -y git curl ca-certificates build-essential python3-venv python3-pip
+    as_root apt-get install -y git curl ca-certificates build-essential python3-venv python3-pip psmisc
   fi
 }
 
@@ -185,6 +185,11 @@ prepare_cua_env() {
 start_vllm() {
   mkdir -p "$MODEL_DOWNLOAD_DIR"
   pkill -f "vllm serve" >/dev/null 2>&1 || true
+  pkill -f "vllm.entrypoints.openai.api_server" >/dev/null 2>&1 || true
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k "${VLLM_PORT}/tcp" >/dev/null 2>&1 || true
+  fi
+  sleep 2
   rm -f "$HOME/vllm.log"
 
   # shellcheck disable=SC1091
