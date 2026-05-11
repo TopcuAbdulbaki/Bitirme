@@ -10,9 +10,11 @@ APP_DIR="${APP_DIR:-$HOME/Bitirme}"
 MODEL_ID="${MODEL_ID:-Qwen/Qwen3.5-9B}"
 VLLM_PORT="${VLLM_PORT:-1234}"
 VLLM_API_KEY="${VLLM_API_KEY:-lm-studio}"
-VLLM_VENV="${VLLM_VENV:-$HOME/.venvs/vllm-cu121}"
+VLLM_VENV="${VLLM_VENV:-$HOME/.venvs/vllm-cu128}"
 CUA_VENV="${CUA_VENV:-$APP_DIR/cua/.venv}"
-VLLM_VERSION="${VLLM_VERSION:-}"
+VLLM_VERSION="${VLLM_VERSION:-0.18.1}"
+VLLM_TORCH_BACKEND="${VLLM_TORCH_BACKEND:-cu128}"
+RESET_VLLM_VENV="${RESET_VLLM_VENV:-true}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
@@ -205,6 +207,10 @@ prepare_repo() {
 
 install_vllm_profile() {
   local py="$1"
+  if [ "$RESET_VLLM_VENV" = "true" ] && [ -d "$VLLM_VENV" ]; then
+    log "Removing existing vLLM venv: $VLLM_VENV"
+    rm -rf "$VLLM_VENV"
+  fi
   run "$py" -m venv "$VLLM_VENV"
   # shellcheck disable=SC1091
   source "$VLLM_VENV/bin/activate"
@@ -213,7 +219,7 @@ install_vllm_profile() {
   if [ -n "$VLLM_VERSION" ]; then
     vllm_package="vllm==${VLLM_VERSION}"
   fi
-  run uv pip install --python "$VLLM_VENV/bin/python" --torch-backend=auto --upgrade \
+  run uv pip install --python "$VLLM_VENV/bin/python" --torch-backend="$VLLM_TORCH_BACKEND" --upgrade \
     "$vllm_package" "transformers>=4.57.0" accelerate safetensors sentencepiece
 
   python - <<'PY'

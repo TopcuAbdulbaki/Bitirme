@@ -74,6 +74,16 @@ Vast template 1234 portunu kendi portal/caddy servisi icin kullaniyorsa:
 VLLM_PORT=1235 ./vast_cua_host_guarded.sh
 ```
 
+Varsayilan vLLM profili:
+
+```bash
+VLLM_VERSION=0.18.1
+VLLM_TORCH_BACKEND=cu128
+VLLM_VENV=$HOME/.venvs/vllm-cu128
+RESET_VLLM_VENV=true
+MIN_CUDA_DRIVER_VERSION=12.8
+```
+
 Repo public oldugu icin token gerekmez. Eski script repo dosyalarini GitHub'dan ceker, vLLM'i ayri venv'e kurar, Qwen vision modeli servis eder, CUA venv'ini hazirlar ve standalone surface testi calistirir.
 
 ```bash
@@ -99,7 +109,8 @@ SEARCH_ENGINE=duckduckgo
 MAX_MODEL_LEN=32768
 GPU_MEMORY_UTILIZATION=0.92
 MIN_CUDA_DRIVER_VERSION=12.8
-VLLM_VERSION=
+VLLM_VERSION=0.18.1
+VLLM_TORCH_BACKEND=cu128
 ```
 
 ### 3. Sorgu/model parametreleriyle calistir
