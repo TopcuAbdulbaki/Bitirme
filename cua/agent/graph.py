@@ -338,22 +338,35 @@ def make_execute_node(ctx: GraphContext):
 
                 progress = False
                 if not page_data.get("error"):
-                    if not page_data.get("is_article") and page_data.get("article_links"):
-                        added = _add_pending_urls(state, page_data.get("article_links", []))
-                        progress = added > 0
-                        print(f"[Graph] Category/list page: {added} article link kuyruğa eklendi")
-                    else:
-                        article = ContentExtractor.extract_from_raw(
-                            page_data,
-                            search_keywords=state.get("_searched_queries", [state.get("query", "")])[-1]
+                    article = ContentExtractor.extract_from_raw(
+                        page_data,
+                        search_keywords=state.get("_searched_queries", [state.get("query", "")])[-1]
+                    )
+                    accepted_article = False
+                    if ContentExtractor.is_valid_article(article):
+                        gate = await ctx.model.assess_article_quality(
+                            article,
+                            state.get("query", state.get("topic", "")),
                         )
-                        if ContentExtractor.is_valid_article(article):
+                        if int(gate.get("accept", 0)) == 1:
+                            article["quality_gate"] = gate
                             article = await ctx.model.analyze_article(article)
                             articles = state.get("collected_articles", [])
                             articles.append(article)
                             state["collected_articles"] = articles
+                            accepted_article = True
                             progress = True
                             print(f"[Graph] Makale eklendi: {article.get('title','')[:60]}")
+                        else:
+                            print(
+                                "[Graph] Makale reddedildi: "
+                                f"{gate.get('page_type', 'unknown')} - {gate.get('reason', '')}"
+                            )
+
+                    if not accepted_article and page_data.get("article_links"):
+                        added = _add_pending_urls(state, page_data.get("article_links", []))
+                        progress = progress or added > 0
+                        print(f"[Graph] Page links queued: {added} article link kuyruğa eklendi")
 
                     if progress:
                         state["_no_progress_cycles"] = 0

@@ -226,11 +226,18 @@ def _extract_json_array(text: str) -> Optional[list]:
 def _clean_model_text(text: str, max_chars: int = 1200) -> str:
     """Best-effort cleanup for useful free-text model output."""
     text = _strip_llm_wrappers(text)
+    text = re.split(
+        r"\b[23]\.\s*(?:analyze|contextualize|synthesize|article context|context)\b",
+        text,
+        maxsplit=1,
+        flags=re.I,
+    )[0]
     text = re.sub(r"\bthe user wants me to [^.]+\.\s*", "", text, flags=re.I)
     text = re.sub(r"\b(?:i need to|i should) [^.]+\.\s*", "", text, flags=re.I)
     text = re.sub(r"^\s*(Thinking Process|Reasoning|Analysis)\s*:\s*", "", text, flags=re.I)
     text = re.sub(r"[*_`#]+", "", text)
     text = re.sub(r"\b\d+\.\s*Analyze the Image\s*:?", "", text, flags=re.I)
+    text = re.sub(r"\b(?:Visuals?|Content|Specific Items|Text|Title)\s*:\s*", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:max_chars]
 
@@ -460,6 +467,136 @@ Rules:
             vlm_results.append(await self.analyze_image_url(image_url, article))
         article["vlm_analysis"] = {"results": vlm_results}
         return article
+
+    async def assess_article_quality(self, article: Dict[str, Any], topic: str = "") -> Dict[str, Any]:
+        """Return a small accept/reject gate for candidate surface articles."""
+        heuristic = self._heuristic_article_quality(article, topic)
+        if heuristic["accept"] == 0:
+            return heuristic
+
+        prompt = f"""You are a strict news article quality gate.
+
+Decide if this candidate should be accepted into a news dataset for the topic.
+
+Accept only if:
+- It is an actual news article, analysis article, or institutional/economic report page.
+- The main text is meaningfully about the requested topic.
+- The page is not an anti-bot/security wall, error page, product page, marketplace page, SEO spam page, generic scraped page, index/category page, or unrelated page.
+
+Return ONLY valid JSON:
+{{
+  "accept": 1,
+  "reason": "short reason",
+  "page_type": "news_article/report/product/security_wall/error/category/seo_spam/unrelated/other",
+  "relevance": "high/medium/low"
+}}
+
+Use accept=0 for low relevance or invalid page types.
+
+Topic: {topic or article.get('keyword_found', '')}
+URL: {article.get('url', '')}
+Source: {article.get('source', '')}
+Title: {article.get('title', '')}
+Description: {article.get('description', '')}
+Content:
+{article.get('content', '')[:2500]}"""
+        try:
+            raw = await self._call_llm(prompt, max_tokens=350)
+            parsed = _extract_json(raw)
+            if parsed:
+                return self._normalize_quality_gate(parsed, article, topic)
+            print(f"[ModelHandler] Article quality parse failed, raw='{raw[:200]}'")
+        except Exception as e:
+            print(f"[ModelHandler] assess_article_quality error: {e}")
+        return heuristic
+
+    def _normalize_quality_gate(
+        self,
+        parsed: Dict[str, Any],
+        article: Dict[str, Any],
+        topic: str,
+    ) -> Dict[str, Any]:
+        page_type = str(parsed.get("page_type", "other")).lower().strip()
+        relevance = self._normalize_label(parsed.get("relevance"), {"high", "medium", "low"}, "low")
+        accept_raw = parsed.get("accept", 0)
+        accept = 1 if accept_raw in (1, "1", True, "true", "yes", "accept") else 0
+
+        invalid_types = {
+            "product", "security_wall", "error", "category",
+            "seo_spam", "unrelated", "marketplace",
+        }
+        if page_type in invalid_types or relevance == "low":
+            accept = 0
+
+        heuristic = self._heuristic_article_quality(article, topic)
+        if heuristic["accept"] == 0:
+            return heuristic
+
+        return {
+            "accept": accept,
+            "reason": str(parsed.get("reason", ""))[:240],
+            "page_type": page_type or "other",
+            "relevance": relevance,
+        }
+
+    def _heuristic_article_quality(self, article: Dict[str, Any], topic: str = "") -> Dict[str, Any]:
+        title = str(article.get("title", ""))
+        content = str(article.get("content", ""))
+        description = str(article.get("description", ""))
+        source = str(article.get("source", "")).lower()
+        url = str(article.get("url", "")).lower()
+        text = f"{title}\n{description}\n{content}".lower()
+
+        bad_markers = [
+            "automated behavior",
+            "programmatic access",
+            "security tools has flagged",
+            "unauthorized commercial tools",
+            "please contact helpdesk",
+            "error code:",
+            "cloudflare ray id",
+            "origin is unreachable",
+            "web server is returning an unknown error",
+            "verify you are human",
+            "human verification",
+            "complete the captcha",
+        ]
+        if any(marker in text for marker in bad_markers):
+            return {
+                "accept": 0,
+                "reason": "security/error wall",
+                "page_type": "security_wall",
+                "relevance": "low",
+            }
+
+        marketplace_markers = [
+            "add to cart", "shopping cart", "commercial license",
+            "download this product", "source files", "creative fabrica",
+            "licença comercial", "carrinho", "inscreva-se gratuitamente",
+        ]
+        if any(marker in text for marker in marketplace_markers):
+            return {
+                "accept": 0,
+                "reason": "marketplace/product page",
+                "page_type": "product",
+                "relevance": "low",
+            }
+
+        bad_sources = {"creativefabrica.com", "googleapis.com"}
+        if source in bad_sources or "storage.googleapis.com" in url:
+            return {
+                "accept": 0,
+                "reason": "non-news hosting/source",
+                "page_type": "seo_spam",
+                "relevance": "low",
+            }
+
+        return {
+            "accept": 1,
+            "reason": "passed heuristic checks",
+            "page_type": "candidate",
+            "relevance": "medium",
+        }
 
     async def analyze_article_text(self, article: Dict[str, Any]) -> Dict[str, Any]:
         prompt = f"""You are a news analysis assistant specialized in sentiment classification.
