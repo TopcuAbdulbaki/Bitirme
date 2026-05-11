@@ -733,25 +733,58 @@ Article context: {article.get('content', '')[:800]}"""
         }
 
     def _fallback_llm_analysis(self, article: Dict[str, Any]) -> Dict[str, Any]:
-        words = re.findall(r"[A-Za-z][A-Za-z0-9-]{4,}", article.get("content", ""))
+        content = self._clean_article_text_for_fallback(article.get("content", ""))
+        description = self._clean_article_text_for_fallback(article.get("description", ""))
+        summary_source = description or content
+        words = re.findall(r"[A-Za-z][A-Za-z0-9-]{4,}", content)
+        stopwords = {
+            "latest", "nation", "region", "world", "business", "lifestyle",
+            "culture", "sports", "opinion", "visuals", "promoted", "links",
+            "privacy", "reserved", "subscribe", "newsletter", "contact",
+            "published", "updated", "friday", "wednesday", "january",
+            "february", "march", "april", "monday", "tuesday", "thursday",
+            "saturday", "sunday",
+        }
         keywords = []
         seen = set()
         for word in words:
             lowered = word.lower()
-            if lowered not in seen:
+            if lowered not in seen and lowered not in stopwords:
                 seen.add(lowered)
                 keywords.append(word)
             if len(keywords) >= 5:
                 break
+        topic = f"{article.get('keyword_found', '')} {article.get('title', '')}".lower()
+        category = "economy" if any(term in topic for term in ["economy", "inflation", "market", "finance", "gdp"]) else "other"
+        gate = article.get("quality_gate", {}) or {}
         return {
-            "summary": (article.get("description") or article.get("content", ""))[:500],
+            "summary": summary_source[:500],
             "sentiment": 0,
             "sentiment_label": "neutral",
             "keywords": keywords,
             "entities": {"countries": [], "organizations": [], "people": []},
-            "category": "other",
-            "relevance_to_topic": "medium",
+            "category": category,
+            "relevance_to_topic": self._normalize_label(gate.get("relevance"), {"high", "medium", "low"}, "medium"),
         }
+
+    def _clean_article_text_for_fallback(self, text: str) -> str:
+        lines = []
+        bad_markers = [
+            "by taboola", "promoted links", "you may like", "most read",
+            "more from", "privacy", "all rights reserved", "subscribe",
+            "newsletter", "contact us", "jobs", "rss",
+        ]
+        for line in str(text or "").splitlines():
+            cleaned = re.sub(r"\s+", " ", line).strip()
+            lowered = cleaned.lower()
+            if len(cleaned) < 45:
+                continue
+            if any(marker in lowered for marker in bad_markers):
+                continue
+            if re.match(r"^(latest|nation|region|world|business|lifestyle|culture|sports|opinion|visuals)(\s|$)", cleaned, re.I):
+                continue
+            lines.append(cleaned)
+        return "\n\n".join(lines) if lines else str(text or "").strip()
 
     def _normalize_label(self, value: Any, allowed: set[str], default: str) -> str:
         value = str(value or "").lower().strip()

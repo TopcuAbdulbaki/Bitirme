@@ -149,6 +149,22 @@ def _choose_search_query(state: AgentState, proposed_query: str) -> tuple[str, s
     return "", ""
 
 
+def _should_search_before_pending(state: AgentState) -> bool:
+    params = _params(state)
+    max_articles = int(params.get("max_articles", 10))
+    if len(state.get("collected_articles", [])) >= max_articles:
+        return False
+    if state.get("_search_count", 0) >= _max_searches(state):
+        return False
+    if not state.get("_pending_urls"):
+        return False
+    if state.get("_rejected_since_search", 0) >= int(params.get("max_rejections_before_new_search", 3)):
+        return True
+    if len(state.get("_pending_urls", [])) >= int(params.get("max_pending_before_new_search", 12)):
+        return True
+    return False
+
+
 def _terminal_status(state: AgentState) -> str:
     if state.get("error"):
         return state["error"]
@@ -233,7 +249,7 @@ def make_plan_node(ctx: GraphContext):
             state["_last_action"] = {"action": "complete"}
             return state
 
-        pending_url = _pop_pending_url(state)
+        pending_url = "" if _should_search_before_pending(state) else _pop_pending_url(state)
         if pending_url:
             decision = {"action": "visit", "url": pending_url}
             state["_last_action"] = decision
@@ -298,6 +314,7 @@ def make_execute_node(ctx: GraphContext):
             state.setdefault("_searched_queries", []).append(query)
             state.setdefault("_searched_query_keys", []).append(query_key)
             state["_search_count"] = state.get("_search_count", 0) + 1
+            state["_rejected_since_search"] = 0
 
             results  = await ctx.browser.search(
                 query,
@@ -356,8 +373,10 @@ def make_execute_node(ctx: GraphContext):
                             state["collected_articles"] = articles
                             accepted_article = True
                             progress = True
+                            state["_rejected_since_search"] = 0
                             print(f"[Graph] Makale eklendi: {article.get('title','')[:60]}")
                         else:
+                            state["_rejected_since_search"] = state.get("_rejected_since_search", 0) + 1
                             print(
                                 "[Graph] Makale reddedildi: "
                                 f"{gate.get('page_type', 'unknown')} - {gate.get('reason', '')}"
@@ -373,6 +392,7 @@ def make_execute_node(ctx: GraphContext):
                     else:
                         state["_no_progress_cycles"] = state.get("_no_progress_cycles", 0) + 1
                 else:
+                    state["_rejected_since_search"] = state.get("_rejected_since_search", 0) + 1
                     state["_no_progress_cycles"] = state.get("_no_progress_cycles", 0) + 1
 
                 print(f"[Graph] Visit '{url}': {'OK' if not page_data.get('error') else page_data['error']}")
@@ -520,6 +540,7 @@ async def run_agent(task_data: dict, browser: BrowserTool, model: CUAModelHandle
         "_query_plan_initialized": False,
         "_search_count":      0,
         "_no_progress_cycles": 0,
+        "_rejected_since_search": 0,
     }
 
     try:

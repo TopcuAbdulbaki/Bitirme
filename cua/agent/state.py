@@ -32,3 +32,4 @@ class AgentState(TypedDict, total=False):
     _query_plan_initialized: bool
     _search_count: int
     _no_progress_cycles: int
+    _rejected_since_search: int

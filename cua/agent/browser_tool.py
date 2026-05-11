@@ -214,12 +214,34 @@ class BrowserTool:
                         document.querySelector('main') ||
                         document.querySelector('[class*="article"], [class*="content"], [class*="post"]') ||
                         document.body;
+                    const blockedSelector = [
+                        'nav', 'header', 'footer', 'aside', 'script', 'style', 'form',
+                        '[class*="nav"]', '[class*="menu"]', '[class*="footer"]',
+                        '[class*="header"]', '[class*="sidebar"]', '[class*="related"]',
+                        '[class*="popular"]', '[class*="most-read"]', '[class*="newsletter"]',
+                        '[class*="comment"]', '[class*="taboola"]', '[class*="promoted"]',
+                        '[id*="taboola"]', '[id*="newsletter"]', '[id*="related"]'
+                    ].join(',');
+                    const badLine = (text) => {
+                        const lower = text.toLowerCase();
+                        if (text.length < 45) return true;
+                        if ((text.match(/\\|/g) || []).length >= 3) return true;
+                        if (/^(latest|nation|region|world|business|lifestyle|culture|sports|opinion|visuals)(\\s|$)/i.test(text)) return true;
+                        return [
+                            'by taboola', 'promoted links', 'you may like', 'most read',
+                            'more from', 'privacy', 'all rights reserved', 'subscribe',
+                            'newsletter', 'contact us', 'jobs', 'rss'
+                        ].some((marker) => lower.includes(marker));
+                    };
                     const paragraphs = Array.from(articleRoot.querySelectorAll('p, h2, h3'))
+                        .filter((el) => !el.closest(blockedSelector))
                         .map((el) => clean(el.innerText))
-                        .filter((text) => text.length > 40);
+                        .filter((text) => !badLine(text));
                     let content = paragraphs.join('\\n\\n');
                     if (content.length < 200) {
-                        content = clean(articleRoot.innerText || document.body.innerText || '');
+                        const clone = articleRoot.cloneNode(true);
+                        clone.querySelectorAll(blockedSelector).forEach((el) => el.remove());
+                        content = clean(clone.innerText || articleRoot.innerText || document.body.innerText || '');
                     }
                     const imageCandidates = Array.from(articleRoot.querySelectorAll('img')).map((img) => {
                         const rect = img.getBoundingClientRect();
@@ -354,6 +376,7 @@ class BrowserTool:
 
         blocked_keywords = [
             "logo", "icon", "avatar", "sprite", "emoji",
+            "author", "profile", "headshot", "portrait", "byline",
             "banner", "ad-", "advert", "promo",
             "button", "arrow", "play", "pause",
             "thumb", "thumbnail", "-thumb.",
@@ -377,6 +400,9 @@ class BrowserTool:
                 str(img_data.get("near_text", ""))[:120],
             ]).lower()
             if any(keyword in text for keyword in blocked_keywords):
+                return False
+            width, height = self._image_dimensions(img_data)
+            if width and height and max(width, height) <= 160:
                 return False
 
         if "bbc.co" in img_lower and any(f"/{size}/" in img_url for size in ["80", "100", "240"]):
