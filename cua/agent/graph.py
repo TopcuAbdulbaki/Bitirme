@@ -42,7 +42,6 @@ _GENERIC_QUERIES = {
     "update",
 }
 
-
 def _params(state: AgentState) -> dict:
     return state.get("params", {}) or {}
 
@@ -365,6 +364,7 @@ def make_execute_node(ctx: GraphContext):
                         search_keywords=state.get("_searched_queries", [state.get("query", "")])[-1]
                     )
                     accepted_article = False
+                    rejected_page_type = ""
                     if ContentExtractor.is_valid_article(article):
                         gate = await ctx.model.assess_article_quality(
                             article,
@@ -381,6 +381,7 @@ def make_execute_node(ctx: GraphContext):
                             state["_rejected_since_search"] = 0
                             print(f"[Graph] Makale eklendi: {article.get('title','')[:60]}")
                         else:
+                            rejected_page_type = str(gate.get("page_type", "")).lower()
                             state["_rejected_since_search"] = state.get("_rejected_since_search", 0) + 1
                             print(
                                 "[Graph] Makale reddedildi: "
@@ -388,7 +389,13 @@ def make_execute_node(ctx: GraphContext):
                             )
 
                     if not accepted_article and page_data.get("article_links"):
-                        added = _add_pending_urls(state, page_data.get("article_links", []))
+                        if rejected_page_type in {
+                            "product", "security_wall", "error", "seo_spam",
+                            "unrelated", "marketplace",
+                        }:
+                            added = 0
+                        else:
+                            added = _add_pending_urls(state, page_data.get("article_links", []))
                         progress = progress or added > 0
                         print(f"[Graph] Page links queued: {added} article link kuyruğa eklendi")
 

@@ -16,6 +16,8 @@ from crawler.generated import orchestrator_pb2 as pb2
 from crawler.generated import orchestrator_pb2_grpc as pb2_grpc
 from crawler.config import ORCHESTRATOR_HOST, ORCHESTRATOR_PORT, HEARTBEAT_INTERVAL
 
+CONNECT_TIMEOUT_SECONDS = 10
+
 
 class NodeStatus(IntEnum):
     IDLE = 0
@@ -48,13 +50,29 @@ class GRPCClient:
     
     def connect(self) -> bool:
         try:
+            if not ORCHESTRATOR_HOST:
+                print("[gRPC] Connection failed: ORCHESTRATOR_HOST is not set")
+                return False
+
             address = f"{ORCHESTRATOR_HOST}:{ORCHESTRATOR_PORT}"
             self._channel = grpc.insecure_channel(address)
+            grpc.channel_ready_future(self._channel).result(timeout=CONNECT_TIMEOUT_SECONDS)
             self._stub = pb2_grpc.OrchestratorServiceStub(self._channel)
             print(f"[gRPC] Connected to Orchestrator at {address}")
             return True
+        except grpc.FutureTimeoutError:
+            print(f"[gRPC] Connection timed out after {CONNECT_TIMEOUT_SECONDS}s")
+            if self._channel:
+                self._channel.close()
+            self._channel = None
+            self._stub = None
+            return False
         except Exception as e:
             print(f"[gRPC] Connection failed: {e}")
+            if self._channel:
+                self._channel.close()
+            self._channel = None
+            self._stub = None
             return False
     
     def register(self) -> bool:
@@ -95,13 +113,13 @@ class GRPCClient:
         self._task_counter += 1
         return f"crawl_{self._node_id}_{self._task_counter}"
     
-    def send_crawl_result(self, news_data: dict) -> bool:
+    def send_crawl_result(self, news_data: dict, task_id: Optional[str] = None) -> bool:
         """Send a single crawled news item to Orchestrator."""
         if not self._stub:
             return False
         
         try:
-            task_id = self._generate_task_id()
+            task_id = task_id or self._generate_task_id()
             json_data = json.dumps(news_data, ensure_ascii=False)
             
             response_msg = pb2.CrawlTaskResponse(

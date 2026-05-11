@@ -7,7 +7,7 @@ import aiohttp
 from PIL import Image
 from io import BytesIO
 from datetime import datetime
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
 # Distributed mode imports
@@ -424,6 +424,43 @@ class NewsCrawler:
         
         return normalized
 
+    def _normalize_task_urls(self, specific_urls):
+        """Normalize URLs/domains supplied by Orchestrator task polling."""
+        normalized = []
+        for raw_url in specific_urls or []:
+            if not raw_url:
+                continue
+            url = raw_url.strip()
+            if not url:
+                continue
+            if not re.match(r"^https?://", url, re.IGNORECASE):
+                url = f"https://{url}"
+            if urlparse(url).netloc:
+                normalized.append(url)
+        return normalized
+
+    def _source_for_target_url(self, url):
+        """Return the configured source matching a target URL, or a minimal custom source."""
+        parsed = urlparse(url)
+        host = parsed.netloc.lower().lstrip("www.")
+
+        for source in SOURCES:
+            domain = source["domain"].lower().lstrip("www.")
+            if host == domain or host.endswith(f".{domain}"):
+                return source
+
+        return {
+            "name": host or "Custom Source",
+            "domain": host,
+            "country": "Unknown",
+            "block_paths": [],
+            "allowed_paths": []
+        }
+
+    def _is_site_root_url(self, url):
+        parsed = urlparse(url)
+        return bool(parsed.netloc) and parsed.path.rstrip("/") == ""
+
     async def _extract_media_content(self, article, session):
         """Extracts and filters media content (images and videos) from article.
         
@@ -646,30 +683,28 @@ class NewsCrawler:
                 # print(f"      ❌ İLGİSİZ")
                 return None
 
-    async def execute_crawl_task(self, specific_urls=None):
+    async def execute_crawl_task(self, specific_urls=None, task_id=None):
         """
         Triggered by Orchestrator via gRPC (or runs directly in standalone).
         Executes the crawling pipeline.
         """
-        print(f"🚀 CRAWL TASK STARTED ({len(SOURCES)} Sources)...")
+        self.results = []
+        target_urls = self._normalize_task_urls(specific_urls)
+        if target_urls:
+            print(f"🚀 CRAWL TASK STARTED ({len(target_urls)} Task Targets)...")
+        else:
+            print(f"🚀 CRAWL TASK STARTED ({len(SOURCES)} Sources)...")
         if CRAWLER_DEMO_MODE:
              print(f"🧪 DEMO MODE ACTIVE: Will stop after {CRAWLER_DEMO_LIMIT} items.")
              
         # 🚀 OPTIMIZATION: Create shared session
         async with aiohttp.ClientSession() as session:
             async with AsyncWebCrawler(config=self.browser_cfg) as crawler:
-                
-                # If specific URLs provided, logic could be here to filter sources
-                # For now, we run the full source list
-                
-                for source in SOURCES:
-                    # 1. Fetch Links
-                    links = await self.fetch_google_links(crawler, source)
-                    
-                    if not links:
-                        continue
 
-                    # 2. Process Links Parallel
+                async def process_links(links, source):
+                    if not links:
+                        return False
+
                     tasks = []
                     for link in links:
                         task = self.verify_and_extract(crawler, link, source['name'], session)
@@ -677,25 +712,68 @@ class NewsCrawler:
                     
                     if tasks:
                         print(f"   ⚡ Processing {len(tasks)} items...")
-                        results = await asyncio.gather(*tasks)
-                        valid_results = [r for r in results if r]
-                        
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+                        valid_results = []
+                        for result in results:
+                            if isinstance(result, Exception):
+                                print(f"      ⚠️ Item skipped after error: {str(result)[:80]}")
+                                continue
+                            if result:
+                                valid_results.append(result)
+
                         for news_item in valid_results:
-                            # Send to Orchestrator (FIXED: check _stub instead of is_connected)
-                            if self.grpc_client and self.grpc_client._stub:
-                                self.grpc_client.send_crawl_result(news_item)
+                            # Send to Orchestrator when running in distributed mode.
+                            if self.grpc_client and self.grpc_client.is_connected:
+                                self.grpc_client.send_crawl_result(news_item, task_id=task_id)
                             
                             self.results.append(news_item)
                             
                             # DEMO LIMIT CHECK
                             if CRAWLER_DEMO_MODE and len(self.results) >= CRAWLER_DEMO_LIMIT:
                                 print(f"\n🛑 DEMO MODE LIMIT REACHED - Stopping...")
-                                return # Exit function
+                                return True
 
-                    if CRAWLER_DEMO_MODE and len(self.results) >= CRAWLER_DEMO_LIMIT:
-                        return
-                    
-                    await asyncio.sleep(random.uniform(3, 6))
+                    return False
+
+                if target_urls:
+                    site_sources = []
+                    direct_targets = []
+                    seen_domains = set()
+
+                    for url in target_urls:
+                        source = self._source_for_target_url(url)
+                        if self._is_site_root_url(url):
+                            domain_key = source["domain"].lower()
+                            if domain_key not in seen_domains:
+                                site_sources.append(source)
+                                seen_domains.add(domain_key)
+                        else:
+                            direct_targets.append((url, source))
+
+                    for source in site_sources:
+                        links = await self.fetch_google_links(crawler, source)
+                        if await process_links(links, source):
+                            return
+
+                    for url, source in direct_targets:
+                        if await process_links([url], source):
+                            return
+                else:
+                    for source in SOURCES:
+                        # 1. Fetch Links
+                        links = await self.fetch_google_links(crawler, source)
+
+                        if not links:
+                            continue
+
+                        # 2. Process Links Parallel
+                        if await process_links(links, source):
+                            return
+
+                        if CRAWLER_DEMO_MODE and len(self.results) >= CRAWLER_DEMO_LIMIT:
+                            return
+
+                        await asyncio.sleep(random.uniform(3, 6))
         
         self.save_results()
         print("✅ Crawl Task Complete")
@@ -705,8 +783,7 @@ class NewsCrawler:
         
         # Connect Client & Register (no server needed - poll model!)
         if self.grpc_client:
-            if self.grpc_client.connect():
-                self.grpc_client.register()
+            if self.grpc_client.connect() and self.grpc_client.register():
                 self.grpc_client.set_status(NodeStatus.IDLE)
                 print("[Crawler] Connected & Registered. Polling for tasks...")
             else:
@@ -731,7 +808,7 @@ class NewsCrawler:
                     self.grpc_client.set_status(NodeStatus.BUSY)
                     
                     # Execute the crawl
-                    await self.execute_crawl_task(urls if urls else None)
+                    await self.execute_crawl_task(urls if urls else None, task_id=task_id)
                     
                     self.grpc_client.set_status(NodeStatus.IDLE)
                     print(f"[Crawler] *** TASK COMPLETE: {task_id} ***")
