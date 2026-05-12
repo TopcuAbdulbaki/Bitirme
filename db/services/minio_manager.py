@@ -84,6 +84,10 @@ class MinIOManager:
         Returns:
             MinIO path or None if failed
         """
+        if not self._client:
+            print("[MinIO] Upload skipped: client not connected")
+            return None
+
         try:
             object_name = f"{news_id}/{filename}"
             
@@ -99,7 +103,7 @@ class MinIOManager:
             print(f"[MinIO] Uploaded: {path}")
             return path
             
-        except S3Error as e:
+        except Exception as e:
             print(f"[MinIO] Upload failed: {e}")
             return None
     
@@ -135,21 +139,39 @@ class MinIOManager:
         # Process main image
         main_url = media.get('main_image')
         if main_url:
-            image_bytes = await self.download_image(main_url)
-            if image_bytes:
-                minio_path = self.upload_image(
-                    news_id,
-                    self._generate_filename(main_url, 0),
-                    image_bytes
-                )
+            if isinstance(main_url, dict):
+                result['main_image'] = main_url
+            elif str(main_url).startswith("minio://"):
                 result['main_image'] = {
-                    'original_url': main_url,
-                    'minio_path': minio_path
+                    'original_url': None,
+                    'minio_path': main_url
                 }
+            else:
+                image_bytes = await self.download_image(main_url)
+                if image_bytes:
+                    minio_path = self.upload_image(
+                        news_id,
+                        self._generate_filename(main_url, 0),
+                        image_bytes
+                    )
+                    result['main_image'] = {
+                        'original_url': main_url,
+                        'minio_path': minio_path
+                    }
         
         # Process content images
         content_images = media.get('content_images', [])
         for i, img_url in enumerate(content_images[:5]):  # Limit to 5
+            if isinstance(img_url, dict):
+                result['content_images'].append(img_url)
+                continue
+            if str(img_url).startswith("minio://"):
+                result['content_images'].append({
+                    'original_url': None,
+                    'minio_path': img_url
+                })
+                continue
+
             image_bytes = await self.download_image(img_url)
             if image_bytes:
                 minio_path = self.upload_image(
@@ -177,6 +199,26 @@ class MinIOManager:
             return response.read()
         except S3Error as e:
             print(f"[MinIO] Get failed: {e}")
+            return None
+        finally:
+            if 'response' in locals():
+                response.close()
+                response.release_conn()
+
+    def get_object_bytes(self, minio_path: str) -> Optional[bytes]:
+        """
+        Retrieve image bytes from a minio://bucket/object path.
+        """
+        if not minio_path or not minio_path.startswith("minio://"):
+            return None
+
+        try:
+            path = minio_path.removeprefix("minio://")
+            bucket, object_name = path.split("/", 1)
+            response = self._client.get_object(bucket, object_name)
+            return response.read()
+        except (ValueError, S3Error) as e:
+            print(f"[MinIO] Get path failed {minio_path}: {e}")
             return None
         finally:
             if 'response' in locals():

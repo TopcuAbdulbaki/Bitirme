@@ -194,24 +194,17 @@ class TransformersHandler(BaseVLMHandler):
             return
         
         try:
-            from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
+            from transformers import AutoModelForImageTextToText, AutoProcessor
             import torch
             
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            print(f"[VLM] Loading model on {device} with 8-bit quantization...")
+            print(f"[VLM] Loading model on {device}...")
             
-            # 8-bit quantization config to reduce VRAM usage
-            quantization_config = BitsAndBytesConfig(
-                load_in_8bit=True,
-                llm_int8_threshold=6.0
-            )
-            
-            # Use AutoModelForVision2Seq for Qwen2/Qwen3 VL compatibility
-            self.model = AutoModelForVision2Seq.from_pretrained(
+            self.model = AutoModelForImageTextToText.from_pretrained(
                 self.model_name,
-                quantization_config=quantization_config,
+                dtype="auto",
                 device_map="auto",
-                trust_remote_code=True  # Required for Qwen3
+                trust_remote_code=True,
             )
             self.processor = AutoProcessor.from_pretrained(
                 self.model_name,
@@ -219,7 +212,7 @@ class TransformersHandler(BaseVLMHandler):
             )
             
             self._loaded = True
-            print(f"[VLM] Model loaded (8-bit): {self.model_name}")
+            print(f"[VLM] Model loaded: {self.model_name}")
             
         except Exception as e:
             print(f"[VLM] Failed to load model: {e}")
@@ -247,14 +240,28 @@ class TransformersHandler(BaseVLMHandler):
                 image_bytes = base64.b64decode(image_data)
                 image = Image.open(io.BytesIO(image_bytes))
             
-            # Prepare prompt
-            prompt = f"{VLM_SYSTEM_PROMPT}\n\nAnalyze this news image. Context: {context}" if context else f"{VLM_SYSTEM_PROMPT}\n\nAnalyze this news image."
-            
-            # Process
-            inputs = self.processor(
-                text=prompt,
-                images=image,
-                return_tensors="pt"
+            user_text = (
+                f"Analyze this news image. Context: {context}"
+                if context
+                else "Analyze this news image."
+            )
+            messages = [
+                {"role": "system", "content": VLM_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": user_text},
+                    ],
+                },
+            ]
+
+            inputs = self.processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
             ).to(self.model.device)
             
             # Generate
@@ -262,11 +269,18 @@ class TransformersHandler(BaseVLMHandler):
                 outputs = self.model.generate(
                     **inputs,
                     max_new_tokens=500,
-                    do_sample=True,
-                    temperature=0.3
+                    do_sample=False,
                 )
             
-            response = self.processor.decode(outputs[0], skip_special_tokens=True)
+            generated_ids = [
+                output_ids[len(input_ids):]
+                for input_ids, output_ids in zip(inputs.input_ids, outputs)
+            ]
+            response = self.processor.batch_decode(
+                generated_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )[0]
             
             # Parse JSON from response
             try:

@@ -220,8 +220,8 @@ class TransformersHandler(BaseLLMHandler):
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                device_map="auto"
+                torch_dtype="auto",
+                device_map="auto",
             )
             
             self._loaded = True
@@ -243,30 +243,42 @@ class TransformersHandler(BaseLLMHandler):
         try:
             import torch
             
-            # Build prompt
             vlm_context = ""
             if vlm_results:
                 vlm_context = "\n\nImage Analysis Results:\n"
                 for i, result in enumerate(vlm_results):
                     vlm_context += f"Image {i+1}: {result.get('description', '')}\n"
             
-            prompt = f"{LLM_SYSTEM_PROMPT}\n\nAnalyze this news article:\n\n{text[:4000]}{vlm_context}"
-            
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            user_content = f"Analyze this news article:\n\n{text[:4000]}{vlm_context}"
+            messages = [
+                {"role": "system", "content": LLM_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ]
+            inputs = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+            ).to(self.model.device)
             
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
                     max_new_tokens=800,
-                    do_sample=True,
-                    temperature=0.3,
-                    pad_token_id=self.tokenizer.eos_token_id
+                    do_sample=False,
+                    pad_token_id=self.tokenizer.eos_token_id,
                 )
             
-            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            
-            # Extract just the generated part
-            response = response[len(prompt):]
+            generated_ids = [
+                output_ids[len(input_ids):]
+                for input_ids, output_ids in zip(inputs.input_ids, outputs)
+            ]
+            response = self.tokenizer.batch_decode(
+                generated_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )[0]
             
             return self._parse_response(response)
             

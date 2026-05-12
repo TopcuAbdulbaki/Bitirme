@@ -7,7 +7,7 @@ FROM python:3.11-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    MODEL_MODE=local
+    MODEL_MODE=transformers
 
 # Set working directory
 WORKDIR /app

@@ -17,6 +17,13 @@ RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
 RABBITMQ_USER = os.getenv('RABBITMQ_USER', 'guest')
 RABBITMQ_PASSWORD = os.getenv('RABBITMQ_PASSWORD', 'guest')
 
+# MinIO Settings (for minio:// media paths produced by DB node)
+MINIO_HOST = os.getenv('MINIO_HOST')
+MINIO_PORT = int(os.getenv('MINIO_PORT', '9000'))
+MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'admin')
+MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'admin123')
+MINIO_SECURE = os.getenv('MINIO_SECURE', 'false').lower() == 'true'
+
 # Queue Names
 QUEUE_VLM_TASKS = 'vlm_tasks'
 QUEUE_VLM_RESULTS = 'vlm_results'

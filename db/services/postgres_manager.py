@@ -211,7 +211,11 @@ class PostgresManager:
             # Parse datetime
             scraped_at = news_data.get('scraped_at')
             if isinstance(scraped_at, str):
-                scraped_at = datetime.fromisoformat(scraped_at)
+                try:
+                    scraped_at = datetime.fromisoformat(scraped_at.replace('Z', '+00:00'))
+                except ValueError:
+                    print(f"[PostgreSQL] Invalid scraped_at ignored: {scraped_at}")
+                    scraped_at = None
             
             # Insert
             await conn.execute("""

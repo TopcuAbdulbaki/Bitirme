@@ -14,7 +14,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from vlm.generated import orchestrator_pb2 as pb2
 from vlm.generated import orchestrator_pb2_grpc as pb2_grpc
-from vlm.config import ORCHESTRATOR_HOST, ORCHESTRATOR_PORT, HEARTBEAT_INTERVAL
+from vlm.config import (
+    ORCHESTRATOR_HOST,
+    ORCHESTRATOR_PORT,
+    HEARTBEAT_INTERVAL,
+    PUBLIC_HOST,
+    PUBLIC_PORT,
+)
 
 
 class NodeStatus(IntEnum):
@@ -59,7 +65,11 @@ class GRPCClient:
             return False
         
         try:
-            request = pb2.RegisterRequest(node_type="vlm")
+            request = pb2.RegisterRequest(
+                node_type="vlm",
+                host=PUBLIC_HOST or "",
+                port=PUBLIC_PORT,
+            )
             response = self._stub.Register(request)
             
             if response.success:

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   orchestrator:
     build:
@@ -11,7 +9,12 @@ services:
       - "50051:50051"
     environment:
       - GRPC_PORT=50051
-      - RABBITMQ_AVAILABLE=false
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
+    depends_on:
+      - rabbitmq
     networks:
       - bitirme-net
 
@@ -51,6 +54,9 @@ services:
     image: db
     depends_on:
       - orchestrator
+      - rabbitmq
+      - postgres
+      - minio
     ports:
       - "50053:50053"
       # Expose Postgres/MinIO for local external tools if needed
@@ -59,12 +65,54 @@ services:
     environment:
       - ORCHESTRATOR_HOST=orchestrator
       - ORCHESTRATOR_PORT=50051
-      - POSTGRES_HOST=localhost # In-container postgres
+      - PUBLIC_HOST=db
+      - PUBLIC_PORT=50053
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
+      - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - MINIO_HOST=localhost # In-container minio
+      - POSTGRES_DB=news_db
+      - POSTGRES_USER=news_user
+      - POSTGRES_PASSWORD=news_password
+      - MINIO_HOST=minio
       - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=admin123
+      - MINIO_BUCKET=news-media
     networks:
       - bitirme-net
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=news_db
+      - POSTGRES_USER=news_user
+      - POSTGRES_PASSWORD=news_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - bitirme-net
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=admin123
+    volumes:
+      - minio-data:/data
+    networks:
+      - bitirme-net
+
   # VLM and LLM are commented out by default due to size/GPU requirements
   # Uncomment to build/run them locally (requires NVIDIA Container Toolkit)
   # vlm:
@@ -80,6 +128,17 @@ services:
   #             capabilities: [gpu]
   #   environment:
   #     - ORCHESTRATOR_HOST=orchestrator
+  #     - ORCHESTRATOR_PORT=50051
+  #     - PUBLIC_HOST=vlm
+  #     - PUBLIC_PORT=50054
+  #     - RABBITMQ_HOST=rabbitmq
+  #     - RABBITMQ_PORT=5672
+  #     - RABBITMQ_USER=guest
+  #     - RABBITMQ_PASSWORD=guest
+  #     - MINIO_HOST=minio
+  #     - MINIO_PORT=9000
+  #     - MINIO_ACCESS_KEY=admin
+  #     - MINIO_SECRET_KEY=admin123
   #   networks:
   #     - bitirme-net
 
@@ -96,6 +155,13 @@ services:
   #             capabilities: [gpu]
   #   environment:
   #     - ORCHESTRATOR_HOST=orchestrator
+  #     - ORCHESTRATOR_PORT=50051
+  #     - PUBLIC_HOST=llm
+  #     - PUBLIC_PORT=50055
+  #     - RABBITMQ_HOST=rabbitmq
+  #     - RABBITMQ_PORT=5672
+  #     - RABBITMQ_USER=guest
+  #     - RABBITMQ_PASSWORD=guest
   #   networks:
   #     - bitirme-net
 
@@ -142,3 +208,7 @@ services:
 networks:
   bitirme-net:
     driver: bridge
+
+volumes:
+  postgres-data:
+  minio-data:

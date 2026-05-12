@@ -77,7 +77,7 @@ class DBNode:
         print(f"[DB Node] RabbitMQ: {'✓' if rabbitmq_ok else '✗'}")
         print("=" * 50)
         
-        return True
+        return postgres_ok and rabbitmq_ok
     
     async def process_crawl_data(self, json_data: str) -> tuple[str, bool]:
         """
@@ -188,11 +188,10 @@ class DBNode:
             url = original.get('url', task_id)
             news_id = self.postgres.generate_news_id(url)
             
-            # First, ensure the news item exists in DB
-            # Check if it exists, if not insert it
             existing = await self.postgres.get_news_by_id(news_id)
             if not existing:
-                # Insert the original news data
+                if 'media' in original and original['media']:
+                    original['media'] = await self.minio.process_news_images(news_id, original['media'])
                 await self.postgres.insert_news(original)
                 print(f"[DB Node] Inserted news: {news_id}")
             
@@ -245,6 +244,10 @@ class DBNode:
         for article in articles:
             if not isinstance(article, dict) or not article.get('url'):
                 continue
+            news_id = self.postgres.generate_news_id(article['url'])
+            if 'media' in article and article['media']:
+                article['media'] = await self.minio.process_news_images(news_id, article['media'])
+
             article['source_type'] = article.get('source_type') or 'agent_surface'
             article['mission_id'] = article.get('mission_id') or mission_id
             news_id, is_duplicate = await self.postgres.insert_news(article)

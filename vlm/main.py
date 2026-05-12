@@ -13,7 +13,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from vlm.config import (
     HEARTBEAT_INTERVAL, MODEL_MODE,
     RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASSWORD,
-    QUEUE_VLM_TASKS, QUEUE_VLM_RESULTS
+    QUEUE_VLM_TASKS, QUEUE_VLM_RESULTS,
+    MINIO_HOST, MINIO_PORT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_SECURE
 )
 from vlm.services.grpc_client import GRPCClient, NodeStatus
 from vlm.services.model_handler import get_vlm_handler, ImageAnalysisResult
@@ -29,6 +30,7 @@ class VLMNode:
     def __init__(self):
         self.grpc_client = GRPCClient()
         self.model_handler = get_vlm_handler()
+        self.minio_client = None
         self.rabbitmq = RabbitMQConsumer(
             host=RABBITMQ_HOST,
             port=RABBITMQ_PORT,
@@ -58,6 +60,19 @@ class VLMNode:
             self.rabbitmq.declare_queue(QUEUE_VLM_RESULTS)
         else:
             print("[VLM Node] Warning: RabbitMQ not available")
+
+        if MINIO_HOST:
+            try:
+                from minio import Minio
+                self.minio_client = Minio(
+                    f"{MINIO_HOST}:{MINIO_PORT}",
+                    access_key=MINIO_ACCESS_KEY,
+                    secret_key=MINIO_SECRET_KEY,
+                    secure=MINIO_SECURE,
+                )
+                print(f"[VLM Node] MinIO configured: {MINIO_HOST}:{MINIO_PORT}")
+            except Exception as e:
+                print(f"[VLM Node] Warning: Could not configure MinIO: {e}")
         
         # Check model availability
         model_ok = await self.model_handler.is_available()
@@ -81,6 +96,24 @@ class VLMNode:
         except Exception as e:
             print(f"[VLM Node] Failed to download image {url[:50]}: {e}")
         return None
+
+    def _get_minio_image(self, path: str) -> bytes | None:
+        """Read image bytes from a minio://bucket/object path."""
+        if not self.minio_client or not path.startswith("minio://"):
+            return None
+
+        try:
+            minio_path = path.removeprefix("minio://")
+            bucket, object_name = minio_path.split("/", 1)
+            response = self.minio_client.get_object(bucket, object_name)
+            return response.read()
+        except Exception as e:
+            print(f"[VLM Node] Failed to read MinIO image {path}: {e}")
+            return None
+        finally:
+            if 'response' in locals():
+                response.close()
+                response.release_conn()
     
     async def process_task(self, task_id: str, json_data: str) -> list[ImageAnalysisResult]:
         """
@@ -114,13 +147,18 @@ class VLMNode:
                 
                 if isinstance(main_image, dict):
                     image_bytes = main_image.get('bytes')
-                    image_url = main_image.get('url') or main_image.get('minio_path')
+                    image_url = (
+                        main_image.get('url')
+                        or main_image.get('minio_path')
+                        or main_image.get('original_url')
+                    )
                 elif isinstance(main_image, str):
                     image_url = main_image
                 
-                # Download if we only have URL
                 if not image_bytes and image_url and image_url.startswith('http'):
                     image_bytes = await self._download_image(image_url)
+                elif not image_bytes and image_url and image_url.startswith('minio://'):
+                    image_bytes = self._get_minio_image(image_url)
                 
                 if image_bytes:
                     result = await self.model_handler.analyze_image(image_bytes, context)
@@ -135,13 +173,18 @@ class VLMNode:
                 
                 if isinstance(img, dict):
                     image_bytes = img.get('bytes')
-                    image_url = img.get('url') or img.get('minio_path')
+                    image_url = (
+                        img.get('url')
+                        or img.get('minio_path')
+                        or img.get('original_url')
+                    )
                 elif isinstance(img, str):
                     image_url = img
                 
-                # Download if we only have URL
                 if not image_bytes and image_url and image_url.startswith('http'):
                     image_bytes = await self._download_image(image_url)
+                elif not image_bytes and image_url and image_url.startswith('minio://'):
+                    image_bytes = self._get_minio_image(image_url)
                 
                 if image_bytes:
                     result = await self.model_handler.analyze_image(image_bytes, context)
