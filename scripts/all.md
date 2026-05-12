@@ -41,6 +41,7 @@ Panelden yapilabilenler:
 - Node durumlari, pipeline tasklari, queue sayilari ve temel DB istatistikleri izlenebilir.
 - DB arama tek kutudan calisir; sentiment `1/0/-1`, tarih araligi ve `her yerde/metinlerde/gorsellerde` filtresi uygulanabilir.
 - Sonuclarda skorlar ve eslesen alan gorunur; `Tam Haber` butonu haber, LLM ve VLM detayini getirir.
+- Storage backup panelden tiklanabilir: PostgreSQL dump ve istege bagli MinIO medya arsivi zip olarak `backups/` altina yazilir, bitince linkten indirilebilir.
 
 ### 2. Orchestrator - Linux
 

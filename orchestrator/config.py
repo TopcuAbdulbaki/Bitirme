@@ -2,6 +2,7 @@
 Orchestrator Configuration
 """
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -41,3 +42,9 @@ ADMIN_DB_NAME = os.getenv('ORCHESTRATOR_DB_NAME', os.getenv('POSTGRES_DB', 'news
 ADMIN_DB_USER = os.getenv('ORCHESTRATOR_DB_USER', os.getenv('POSTGRES_USER', 'news_user'))
 ADMIN_DB_PASSWORD = os.getenv('ORCHESTRATOR_DB_PASSWORD', os.getenv('POSTGRES_PASSWORD', 'news_password'))
 ADMIN_DB_EMBEDDING_DIM = int(os.getenv('ORCHESTRATOR_DB_EMBEDDING_DIM', '1024'))
+
+# Local storage backup settings for the ops panel
+BACKUP_DIR = os.getenv('ORCHESTRATOR_BACKUP_DIR', str(Path.cwd() / 'backups'))
+BACKUP_POSTGRES_CONTAINER = os.getenv('ORCHESTRATOR_POSTGRES_CONTAINER', 'postgres')
+BACKUP_MINIO_CONTAINER = os.getenv('ORCHESTRATOR_MINIO_CONTAINER', 'minio')
+BACKUP_COMMAND_TIMEOUT = int(os.getenv('ORCHESTRATOR_BACKUP_COMMAND_TIMEOUT', '3600'))

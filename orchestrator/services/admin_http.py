@@ -8,6 +8,7 @@ from typing import Any
 from aiohttp import web
 
 from .admin_db import AdminDatabase
+from .storage_backup import StorageBackupManager
 
 
 INDEX_HTML = """<!doctype html>
@@ -232,6 +233,17 @@ INDEX_HTML = """<!doctype html>
     </section>
 
     <section>
+      <h2>Storage Backup</h2>
+      <div class="control-grid">
+        <label class="checkline"><input id="backup-postgres" type="checkbox" checked> PostgreSQL dump</label>
+        <label class="checkline"><input id="backup-minio" type="checkbox" checked> MinIO medya arsivi</label>
+      </div>
+      <button id="backup-start" type="button" style="margin-top:10px;">Backup Baslat</button>
+      <p id="backup-feedback" class="muted" style="margin-top:10px;"></p>
+      <div id="backup-results"></div>
+    </section>
+
+    <section>
       <h2>Nodelar</h2>
       <table>
         <thead>
@@ -370,6 +382,36 @@ INDEX_HTML = """<!doctype html>
         </div>
       `).join("") : `<div class="empty">Mission yok</div>`;
     }
+    function fmtSize(bytes) {
+      const value = Number(bytes || 0);
+      if (value > 1024 * 1024 * 1024) return (value / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+      if (value > 1024 * 1024) return (value / (1024 * 1024)).toFixed(2) + " MB";
+      if (value > 1024) return (value / 1024).toFixed(1) + " KB";
+      return value + " B";
+    }
+    async function refreshBackups() {
+      const data = await getJson("/api/backups");
+      const feedback = document.querySelector("#backup-feedback");
+      const root = document.querySelector("#backup-results");
+      const button = document.querySelector("#backup-start");
+      button.disabled = data.running;
+      feedback.textContent = `${data.state}: ${data.message}${data.error ? " - " + data.error : ""}`;
+      const latest = data.archive_name ? `
+        <div class="result">
+          <strong>Son backup: ${esc(data.archive_name)}</strong>
+          <div class="scoreline">${esc(data.completed_at || "")} · ${esc(fmtSize(data.archive_size))}</div>
+          <a href="/api/backups/download/${encodeURIComponent(data.archive_name)}">Zip indir</a>
+        </div>
+      ` : "";
+      const archives = (data.archives || []).map(item => `
+        <div class="result">
+          <strong>${esc(item.name)}</strong>
+          <div class="scoreline">${esc(item.modified_at)} · ${esc(fmtSize(item.size))}</div>
+          <a href="/api/backups/download/${encodeURIComponent(item.name)}">Zip indir</a>
+        </div>
+      `).join("");
+      root.innerHTML = latest || archives ? latest + archives : `<div class="empty">Backup yok</div>`;
+    }
     document.querySelector("#research-form").addEventListener("submit", async event => {
       event.preventDefault();
       const feedback = document.querySelector("#research-feedback");
@@ -431,6 +473,25 @@ INDEX_HTML = """<!doctype html>
         feedback.textContent = "Hata: " + error.message;
       }
     });
+    document.querySelector("#backup-start").addEventListener("click", async () => {
+      const feedback = document.querySelector("#backup-feedback");
+      feedback.textContent = "Backup baslatiliyor...";
+      try {
+        const payload = {
+          include_postgres: document.querySelector("#backup-postgres").checked,
+          include_minio: document.querySelector("#backup-minio").checked
+        };
+        const data = await getJson("/api/backups/start", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        feedback.textContent = data.started ? "Backup arka planda basladi." : "Backup baslatilamadi: " + (data.error || "");
+        await refreshBackups();
+      } catch (error) {
+        feedback.textContent = "Hata: " + error.message;
+      }
+    });
     document.querySelector("#search-form").addEventListener("submit", async event => {
       event.preventDefault();
       const root = document.querySelector("#search-results");
@@ -479,7 +540,7 @@ INDEX_HTML = """<!doctype html>
       }
     }
     async function refreshAll() {
-      await Promise.allSettled([refreshSummary(), refreshNodes(), refreshMissions()]);
+      await Promise.allSettled([refreshSummary(), refreshNodes(), refreshMissions(), refreshBackups()]);
     }
     refreshAll();
     setInterval(refreshAll, 5000);
@@ -497,6 +558,7 @@ class AdminHttpServer:
         self.host = host
         self.port = port
         self.db = AdminDatabase()
+        self.backups = StorageBackupManager()
         self._runner = None
         self._site = None
 
@@ -512,6 +574,9 @@ class AdminHttpServer:
         app.router.add_get("/api/news/{news_id}", self.news_detail)
         app.router.add_get("/api/missions", self.missions)
         app.router.add_get("/api/missions/{mission_id}", self.mission_detail)
+        app.router.add_get("/api/backups", self.backup_status)
+        app.router.add_post("/api/backups/start", self.backup_start)
+        app.router.add_get("/api/backups/download/{archive_name}", self.backup_download)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.host, self.port)
@@ -547,6 +612,7 @@ class AdminHttpServer:
                     "db": db_health,
                 },
                 "db_stats": db_stats,
+                "backups": self.backups.status(),
             }
         )
 
@@ -632,3 +698,24 @@ class AdminHttpServer:
 
     async def mission_detail(self, request):
         return web.json_response(await self.db.mission_detail(request.match_info["mission_id"]))
+
+    async def backup_status(self, request):
+        return web.json_response(self.backups.status())
+
+    async def backup_start(self, request):
+        payload = await request.json()
+        result = self.backups.start(
+            include_postgres=bool(payload.get("include_postgres", True)),
+            include_minio=bool(payload.get("include_minio", True)),
+        )
+        status = 202 if result.get("started") else 409
+        if result.get("error") == "nothing selected":
+            status = 400
+        return web.json_response(result, status=status)
+
+    async def backup_download(self, request):
+        archive_name = request.match_info["archive_name"]
+        path = self.backups.archive_path(archive_name)
+        if not path:
+            return web.json_response({"error": "backup archive not found"}, status=404)
+        return web.FileResponse(path)
