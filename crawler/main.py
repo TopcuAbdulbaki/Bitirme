@@ -151,6 +151,7 @@ class NewsCrawler:
     def __init__(self):
         """Initialize the NewsCrawler with default configurations."""
         self.results = []
+        self.config = self._build_runtime_config()
         # Semaphore paralellik limitini belirler (Aynı anda 3 sekme)
         self.semaphore = asyncio.Semaphore(3) 
         
@@ -191,11 +192,11 @@ class NewsCrawler:
         print(f"\n🌍 {source['name']} ({source['domain']}) taranıyor...")
         
         # Build time filter: qdr:h1, qdr:d3, qdr:w, etc.
-        time_filter = f"qdr:{Config['time_unit']}{Config['time_value']}"
+        time_filter = f"qdr:{self.config['time_unit']}{self.config['time_value']}"
         
         google_url = (
             f"https://www.google.com/search?"
-            f"q=site:{source['domain']}+({Config['search_query']})"
+            f"q=site:{source['domain']}+({self.config['search_query']})"
             f"&tbs={time_filter}&hl=en&num=30"  # Changed to English, increased results
         )
 
@@ -439,6 +440,47 @@ class NewsCrawler:
                 normalized.append(url)
         return normalized
 
+    def _build_runtime_config(self, overrides=None):
+        """Build per-task crawler config without mutating global defaults."""
+        config = {
+            key: list(value) if isinstance(value, list) else value
+            for key, value in Config.items()
+        }
+        overrides = overrides or {}
+
+        if overrides.get("search_query"):
+            config["search_query"] = str(overrides["search_query"]).strip()
+
+        if overrides.get("time_unit") in {"h", "d", "w", "m"}:
+            config["time_unit"] = overrides["time_unit"]
+
+        for key in ("time_value", "max_images"):
+            if overrides.get(key) not in (None, ""):
+                try:
+                    config[key] = max(1, int(overrides[key]))
+                except (TypeError, ValueError):
+                    pass
+
+        keywords = overrides.get("required_keywords")
+        if isinstance(keywords, str):
+            parsed = [
+                item.strip().lower()
+                for item in re.split(r"[\n,]+", keywords)
+                if item.strip()
+            ]
+            if parsed:
+                config["required_keywords"] = parsed
+        elif isinstance(keywords, list) and keywords:
+            parsed = [
+                str(item).strip().lower()
+                for item in keywords
+                if str(item).strip()
+            ]
+            if parsed:
+                config["required_keywords"] = parsed
+
+        return config
+
     def _source_for_target_url(self, url):
         """Return the configured source matching a target URL, or a minimal custom source."""
         parsed = urlparse(url)
@@ -571,7 +613,7 @@ class NewsCrawler:
                     # print(f"        📐 Resim: {w}x{h} (Alan: {importance:,}px²)")
                     
                     # Limit reached
-                    if len(media_content['content_images']) >= Config['max_images']:
+                    if len(media_content['content_images']) >= self.config['max_images']:
                         break
                 
                 # Step 3: Extract videos
@@ -662,7 +704,7 @@ class NewsCrawler:
 
             # Keyword matching
             clean_text_lower = clean_text.lower()
-            match = next((kw for kw in Config['required_keywords'] if kw in clean_text_lower), None)
+            match = next((kw for kw in self.config['required_keywords'] if kw in clean_text_lower), None)
 
             if match:
                 img_count = len(media_content['content_images'])
@@ -683,17 +725,33 @@ class NewsCrawler:
                 # print(f"      ❌ İLGİSİZ")
                 return None
 
-    async def execute_crawl_task(self, specific_urls=None, task_id=None):
+    async def execute_crawl_task(
+        self,
+        specific_urls=None,
+        task_id=None,
+        use_default_sources=True,
+        max_items=None,
+        config_overrides=None,
+    ):
         """
         Triggered by Orchestrator via gRPC (or runs directly in standalone).
         Executes the crawling pipeline.
         """
         self.results = []
+        self.config = self._build_runtime_config(config_overrides)
+        try:
+            max_items = int(max_items) if max_items else None
+        except (TypeError, ValueError):
+            max_items = None
         target_urls = self._normalize_task_urls(specific_urls)
+        target_count = len(target_urls)
+        source_count = len(SOURCES) if use_default_sources else 0
         if target_urls:
-            print(f"🚀 CRAWL TASK STARTED ({len(target_urls)} Task Targets)...")
+            print(f"🚀 CRAWL TASK STARTED ({target_count} Task Targets, defaults={use_default_sources})...")
         else:
-            print(f"🚀 CRAWL TASK STARTED ({len(SOURCES)} Sources)...")
+            print(f"🚀 CRAWL TASK STARTED ({source_count} Sources)...")
+        if max_items:
+            print(f"🎯 MAX ITEM LIMIT: {max_items}")
         if CRAWLER_DEMO_MODE:
              print(f"🧪 DEMO MODE ACTIVE: Will stop after {CRAWLER_DEMO_LIMIT} items.")
              
@@ -727,6 +785,10 @@ class NewsCrawler:
                                 self.grpc_client.send_crawl_result(news_item, task_id=task_id)
                             
                             self.results.append(news_item)
+
+                            if max_items and len(self.results) >= max_items:
+                                print(f"\n🛑 MAX ITEM LIMIT REACHED ({max_items}) - Stopping...")
+                                return True
                             
                             # DEMO LIMIT CHECK
                             if CRAWLER_DEMO_MODE and len(self.results) >= CRAWLER_DEMO_LIMIT:
@@ -734,6 +796,8 @@ class NewsCrawler:
                                 return True
 
                     return False
+
+                processed_source_domains = set()
 
                 if target_urls:
                     site_sources = []
@@ -752,14 +816,20 @@ class NewsCrawler:
 
                     for source in site_sources:
                         links = await self.fetch_google_links(crawler, source)
+                        processed_source_domains.add(source["domain"].lower().lstrip("www."))
                         if await process_links(links, source):
                             return
 
                     for url, source in direct_targets:
                         if await process_links([url], source):
                             return
-                else:
+
+                if use_default_sources:
                     for source in SOURCES:
+                        domain_key = source["domain"].lower().lstrip("www.")
+                        if domain_key in processed_source_domains:
+                            continue
+
                         # 1. Fetch Links
                         links = await self.fetch_google_links(crawler, source)
 
@@ -768,6 +838,9 @@ class NewsCrawler:
 
                         # 2. Process Links Parallel
                         if await process_links(links, source):
+                            return
+
+                        if max_items and len(self.results) >= max_items:
                             return
 
                         if CRAWLER_DEMO_MODE and len(self.results) >= CRAWLER_DEMO_LIMIT:
@@ -806,9 +879,22 @@ class NewsCrawler:
                 if has_task:
                     print(f"[Crawler] *** TASK RECEIVED: {task_id} ***")
                     self.grpc_client.set_status(NodeStatus.BUSY)
+
+                    task_config = {}
+                    if config_json:
+                        try:
+                            task_config = json.loads(config_json)
+                        except json.JSONDecodeError as exc:
+                            print(f"[Crawler] Invalid task config ignored: {exc}")
                     
                     # Execute the crawl
-                    await self.execute_crawl_task(urls if urls else None, task_id=task_id)
+                    await self.execute_crawl_task(
+                        urls if urls else None,
+                        task_id=task_id,
+                        use_default_sources=task_config.get("use_default_sources", True),
+                        max_items=task_config.get("max_items"),
+                        config_overrides=task_config,
+                    )
                     
                     self.grpc_client.set_status(NodeStatus.IDLE)
                     print(f"[Crawler] *** TASK COMPLETE: {task_id} ***")

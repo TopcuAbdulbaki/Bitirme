@@ -50,6 +50,8 @@ class Orchestrator:
         # Crawl control (poll model)
         self.crawl_active = False  # Manual start/stop
         self._crawl_task_given = {}  # Track which crawlers have received tasks
+        self._crawl_urls = []
+        self._crawl_config = {"use_default_sources": True}
         
         # Wire up callbacks
         self._setup_callbacks()
@@ -184,27 +186,44 @@ class Orchestrator:
         self._crawl_task_given[node_id] = True
         
         print(f"[Orchestrator] Crawl task assigned to {node_id}")
-        return (True, task_id, [], "")  # Empty URLs = use default sources
+        import json
+        return (True, task_id, list(self._crawl_urls), json.dumps(self._crawl_config))
     
-    def queue_research(self, keywords: str):
+    def queue_research(
+        self,
+        keywords: str,
+        params: dict | None = None,
+        metadata: dict | None = None,
+    ):
         """Queue a research task to CUA node."""
-        success = self.pipeline._fan_out_to_cua(keywords)
+        success = self.pipeline._fan_out_to_cua(keywords, params=params, metadata=metadata)
         if success:
             print(f"[Orchestrator] Research task queued with keywords: '{keywords}'")
         else:
             print(f"[Orchestrator] Failed to queue research task")
         return success
     
-    def start_crawl(self):
+    def start_crawl(
+        self,
+        urls: list[str] | None = None,
+        use_default_sources: bool = True,
+        config: dict | None = None,
+    ):
         """Start crawling (called manually)."""
         print("[Orchestrator] *** CRAWL STARTED ***")
         self.crawl_active = True
         self._crawl_task_given = {}  # Reset
+        self._crawl_urls = urls or []
+        self._crawl_config = {"use_default_sources": use_default_sources}
+        if config:
+            self._crawl_config.update(config)
     
     def stop_crawl(self):
         """Stop crawling."""
         print("[Orchestrator] *** CRAWL STOPPED ***")
         self.crawl_active = False
+        self._crawl_urls = []
+        self._crawl_config = {"use_default_sources": True}
 
     
     def start(self):

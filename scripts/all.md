@@ -26,12 +26,21 @@ RabbitMQ, PostgreSQL ve MinIO'yu bu makinede baslatip panelin DB'yi okumasini is
 ```
 
 Bu komut RabbitMQ, PostgreSQL, MinIO ve orchestrator'i kaldirir; PostgreSQL semasini da bootstrap eder.
+Storage zaten aciksa sadece schema kontrolu icin `-BootstrapDb` eklenebilir. DB hazir degilse panel yine acilir; DB karti degraded gorunur.
 
 Panel varsayilan olarak:
 
 ```text
 http://127.0.0.1:8088
 ```
+
+Panelden yapilabilenler:
+
+- CUA research task basma; makale limiti, arama limiti, dongu limiti, model adi ve context degeri panelden verilebilir.
+- Crawler baslatma; satir satir domain/URL eklenebilir, default kaynaklar checkbox ile dahil/disi birakilabilir. Arama terimi, zaman filtresi, haber limiti, gorsel limiti ve zorunlu kelimeler task bazinda degistirilebilir.
+- Node durumlari, pipeline tasklari, queue sayilari ve temel DB istatistikleri izlenebilir.
+- DB arama tek kutudan calisir; sentiment `1/0/-1`, tarih araligi ve `her yerde/metinlerde/gorsellerde` filtresi uygulanabilir.
+- Sonuclarda skorlar ve eslesen alan gorunur; `Tam Haber` butonu haber, LLM ve VLM detayini getirir.
 
 ### 2. Orchestrator - Linux
 
@@ -41,6 +50,18 @@ curl -fsSL -o orchestrator_host_guarded.sh \
   https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/orchestrator_host_guarded.sh
 chmod +x orchestrator_host_guarded.sh
 ./orchestrator_host_guarded.sh
+```
+
+Lokal PostgreSQL/MinIO'yu da compose ile acmak istersen:
+
+```bash
+START_LOCAL_STORAGE=true ./orchestrator_host_guarded.sh
+```
+
+PostgreSQL zaten hazirsa schema bootstrap icin:
+
+```bash
+POSTGRES_HOST=127.0.0.1 BOOTSTRAP_DB=true ./orchestrator_host_guarded.sh
 ```
 
 ### 3. Crawler Node

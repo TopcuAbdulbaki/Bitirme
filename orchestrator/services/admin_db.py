@@ -5,6 +5,7 @@ import asyncio
 import os
 import re
 from collections import defaultdict
+from datetime import datetime, timedelta
 from typing import Any
 
 try:
@@ -31,6 +32,45 @@ def _safe_excerpt(value: str | None, limit: int = 280) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
+
+
+def _parse_sentiment(value: str | int | None) -> int | None:
+    if value in (-1, 0, 1):
+        return int(value)
+    text = str(value or "").strip()
+    if text in {"-1", "0", "1"}:
+        return int(text)
+    return None
+
+
+def _parse_date(value: str | None, *, end_of_day: bool = False) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            parsed = datetime.fromisoformat(text)
+            if end_of_day:
+                return parsed + timedelta(days=1) - timedelta(microseconds=1)
+            return parsed
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _row_dict(row) -> dict[str, Any]:
+    return {key: _json_safe(value) for key, value in dict(row).items()}
 
 
 class AdminDatabase:
@@ -186,45 +226,112 @@ class AdminDatabase:
             self._last_error = str(exc)
             return {"available": False, "error": self._last_error}
 
-    async def search_news(self, query: str, limit: int = 12) -> dict[str, Any]:
+    async def search_news(
+        self,
+        query: str,
+        limit: int = 12,
+        sentiment: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        area: str = "all",
+    ) -> dict[str, Any]:
         query = (query or "").strip()
         if not query:
             return {"available": True, "query": "", "results": []}
         if not await self.ensure_connected():
             return {"available": False, "query": query, "error": self._last_error, "results": []}
 
+        search_area = area if area in {"all", "text", "images"} else "all"
+        sentiment_value = _parse_sentiment(sentiment)
+        start_at = _parse_date(date_from)
+        end_at = _parse_date(date_to, end_of_day=True)
+
         try:
             async with self._pool.acquire() as conn:
                 text_rows = await conn.fetch(
                     """
+                    WITH ranked AS (
+                        SELECT
+                            n.news_id,
+                            n.url,
+                            n.source,
+                            n.country,
+                            n.keyword_found,
+                            n.scraped_at,
+                            n.stored_at,
+                            n.content,
+                            n.media,
+                            l.summary,
+                            l.sentiment,
+                            l.sentiment_label,
+                            (
+                                to_tsvector(
+                                    'simple',
+                                    coalesce(n.content, '') || ' ' ||
+                                    coalesce(l.summary, '') || ' ' ||
+                                    coalesce(n.source, '') || ' ' ||
+                                    coalesce(n.keyword_found, '') || ' ' ||
+                                    coalesce(n.url, '')
+                                ) @@ plainto_tsquery('simple', $1)
+                                OR n.content ILIKE '%' || $1 || '%'
+                                OR l.summary ILIKE '%' || $1 || '%'
+                                OR n.source ILIKE '%' || $1 || '%'
+                                OR n.keyword_found ILIKE '%' || $1 || '%'
+                                OR n.url ILIKE '%' || $1 || '%'
+                            ) AS text_match,
+                            (
+                                n.media::text ILIKE '%' || $1 || '%'
+                                OR EXISTS (
+                                    SELECT 1
+                                    FROM vlm_analysis v
+                                    WHERE v.news_id = n.news_id
+                                      AND (
+                                          v.description ILIKE '%' || $1 || '%'
+                                          OR coalesce(array_to_string(v.objects, ' '), '') ILIKE '%' || $1 || '%'
+                                          OR v.image_minio_path ILIKE '%' || $1 || '%'
+                                          OR v.sentiment ILIKE '%' || $1 || '%'
+                                          OR v.relevance ILIKE '%' || $1 || '%'
+                                      )
+                                )
+                            ) AS image_match,
+                            ts_rank_cd(
+                                to_tsvector(
+                                    'simple',
+                                    coalesce(n.content, '') || ' ' ||
+                                    coalesce(l.summary, '') || ' ' ||
+                                    coalesce(n.source, '') || ' ' ||
+                                    coalesce(n.keyword_found, '')
+                                ),
+                                plainto_tsquery('simple', $1)
+                            ) AS text_rank
+                        FROM news n
+                        LEFT JOIN llm_analysis l ON l.news_id = n.news_id
+                        WHERE ($2::int IS NULL OR l.sentiment = $2)
+                          AND ($3::timestamp IS NULL OR coalesce(n.scraped_at, n.stored_at) >= $3)
+                          AND ($4::timestamp IS NULL OR coalesce(n.scraped_at, n.stored_at) <= $4)
+                    )
                     SELECT
-                        n.news_id,
-                        n.url,
-                        n.source,
-                        n.country,
-                        n.keyword_found,
-                        n.content,
-                        l.summary,
-                        ts_rank_cd(
-                            to_tsvector('simple', coalesce(n.content, '') || ' ' || coalesce(l.summary, '')),
-                            plainto_tsquery('simple', $1)
-                        ) AS text_rank
-                    FROM news n
-                    LEFT JOIN llm_analysis l ON l.news_id = n.news_id
-                    WHERE to_tsvector('simple', coalesce(n.content, '') || ' ' || coalesce(l.summary, ''))
-                          @@ plainto_tsquery('simple', $1)
-                       OR n.source ILIKE '%' || $1 || '%'
-                       OR n.keyword_found ILIKE '%' || $1 || '%'
-                    ORDER BY text_rank DESC NULLS LAST, n.stored_at DESC
-                    LIMIT $2
+                        news_id, url, source, country, keyword_found,
+                        scraped_at, stored_at, content, media,
+                        summary, sentiment, sentiment_label,
+                        text_match, image_match, text_rank
+                    FROM ranked
+                    WHERE (($5 = 'all' OR $5 = 'text') AND text_match)
+                       OR (($5 = 'all' OR $5 = 'images') AND image_match)
+                    ORDER BY text_rank DESC NULLS LAST, image_match DESC, stored_at DESC
+                    LIMIT $6
                     """,
                     query,
+                    sentiment_value,
+                    start_at,
+                    end_at,
+                    search_area,
                     limit,
                 )
 
                 vector_rows = []
                 query_embedding = await self._query_embedding(query)
-                if query_embedding:
+                if query_embedding and search_area != "images":
                     vector_rows = await conn.fetch(
                         """
                         SELECT
@@ -233,16 +340,27 @@ class AdminDatabase:
                             n.source,
                             n.country,
                             n.keyword_found,
+                            n.scraped_at,
+                            n.stored_at,
                             n.content,
+                            n.media,
                             l.summary,
+                            l.sentiment,
+                            l.sentiment_label,
                             1 - (n.content_embedding <=> $1::vector) AS vector_rank
                         FROM news n
                         LEFT JOIN llm_analysis l ON l.news_id = n.news_id
                         WHERE n.content_embedding IS NOT NULL
+                          AND ($2::int IS NULL OR l.sentiment = $2)
+                          AND ($3::timestamp IS NULL OR coalesce(n.scraped_at, n.stored_at) >= $3)
+                          AND ($4::timestamp IS NULL OR coalesce(n.scraped_at, n.stored_at) <= $4)
                         ORDER BY n.content_embedding <=> $1::vector
-                        LIMIT $2
+                        LIMIT $5
                         """,
                         str(query_embedding),
+                        sentiment_value,
+                        start_at,
+                        end_at,
                         limit,
                     )
 
@@ -250,17 +368,23 @@ class AdminDatabase:
             for row in text_rows:
                 item = merged[row["news_id"]]
                 item.update(dict(row))
+                item["text_match"] = bool(row["text_match"])
+                item["image_match"] = bool(row["image_match"])
                 item["text_rank"] = float(row["text_rank"] or 0.0)
             for row in vector_rows:
                 item = merged[row["news_id"]]
                 item.update(dict(row))
+                item.setdefault("text_match", False)
+                item.setdefault("image_match", False)
                 item["vector_rank"] = float(row["vector_rank"] or 0.0)
 
             results = []
             for news_id, item in merged.items():
                 text_rank = float(item.get("text_rank") or 0.0)
                 vector_rank = float(item.get("vector_rank") or 0.0)
-                combined_score = text_rank + max(vector_rank, 0.0)
+                text_score = text_rank if text_rank > 0 else (0.12 if item.get("text_match") else 0.0)
+                image_score = 0.1 if item.get("image_match") else 0.0
+                combined_score = text_score + image_score + max(vector_rank, 0.0)
                 results.append(
                     {
                         "news_id": news_id,
@@ -268,10 +392,21 @@ class AdminDatabase:
                         "source": item.get("source"),
                         "country": item.get("country"),
                         "keyword_found": item.get("keyword_found"),
+                        "scraped_at": _json_safe(item.get("scraped_at")),
+                        "stored_at": _json_safe(item.get("stored_at")),
+                        "sentiment": item.get("sentiment"),
+                        "sentiment_label": item.get("sentiment_label"),
+                        "matched_area": (
+                            "both" if item.get("text_match") and item.get("image_match")
+                            else "images" if item.get("image_match")
+                            else "text" if item.get("text_match")
+                            else "vector"
+                        ),
                         "excerpt": _safe_excerpt(item.get("content")),
                         "summary": _safe_excerpt(item.get("summary"), 220),
-                        "text_score": round(text_rank, 4),
+                        "text_score": round(text_score, 4),
                         "vector_score": round(vector_rank, 4),
+                        "image_score": round(image_score, 4),
                         "combined_score": round(combined_score, 4),
                     }
                 )
@@ -279,12 +414,59 @@ class AdminDatabase:
             return {
                 "available": True,
                 "query": query,
+                "filters": {
+                    "sentiment": sentiment_value,
+                    "date_from": start_at.isoformat() if start_at else "",
+                    "date_to": end_at.isoformat() if end_at else "",
+                    "area": search_area,
+                },
                 "results": results[:limit],
                 "vector_search": self._vector_status(),
             }
         except Exception as exc:
             self._last_error = str(exc)
             return {"available": False, "query": query, "error": self._last_error, "results": []}
+
+    async def news_detail(self, news_id: str) -> dict[str, Any]:
+        if not await self.ensure_connected():
+            return {"available": False, "error": self._last_error}
+        try:
+            async with self._pool.acquire() as conn:
+                news = await conn.fetchrow(
+                    """
+                    SELECT *
+                    FROM news
+                    WHERE news_id = $1
+                    """,
+                    news_id,
+                )
+                if not news:
+                    return {"available": True, "news": None}
+                llm = await conn.fetchrow(
+                    """
+                    SELECT *
+                    FROM llm_analysis
+                    WHERE news_id = $1
+                    """,
+                    news_id,
+                )
+                vlm_rows = await conn.fetch(
+                    """
+                    SELECT id, image_minio_path, description, objects, sentiment,
+                           relevance, analyzed_at
+                    FROM vlm_analysis
+                    WHERE news_id = $1
+                    ORDER BY analyzed_at DESC, id DESC
+                    """,
+                    news_id,
+                )
+            data = _row_dict(news)
+            data["llm_analysis"] = _row_dict(llm) if llm else None
+            data["vlm_analysis"] = [_row_dict(row) for row in vlm_rows]
+            return {"available": True, "news": data}
+        except Exception as exc:
+            self._last_error = str(exc)
+            return {"available": False, "error": self._last_error}
 
     async def list_missions(self, limit: int = 20) -> dict[str, Any]:
         if not await self.ensure_connected():

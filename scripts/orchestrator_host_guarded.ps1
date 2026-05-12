@@ -15,6 +15,7 @@ param(
     [string]$PostgresPassword = "news_password",
     [switch]$StartRabbitWithCompose,
     [switch]$StartStorageWithCompose,
+    [switch]$BootstrapDb,
     [switch]$StopExistingOrchestrator,
     [switch]$FollowLogs
 )
@@ -95,8 +96,9 @@ $env:ORCHESTRATOR_DB_NAME = $PostgresDb
 $env:ORCHESTRATOR_DB_USER = $PostgresUser
 $env:ORCHESTRATOR_DB_PASSWORD = $PostgresPassword
 
-Write-Step "Bootstrapping PostgreSQL schema"
-$bootstrap = @'
+if ($StartStorageWithCompose -or $BootstrapDb) {
+    Write-Step "Bootstrapping PostgreSQL schema"
+    $bootstrap = @'
 import asyncio
 from db.services.postgres_manager import PostgresManager
 
@@ -110,7 +112,10 @@ async def main():
 
 asyncio.run(main())
 '@
-$bootstrap | .\.venv-orch\Scripts\python.exe - | Out-Host
+    $bootstrap | .\.venv-orch\Scripts\python.exe - | Out-Host
+} else {
+    Write-Step "Skipping PostgreSQL schema bootstrap"
+}
 
 $existing = Get-CimInstance Win32_Process | Where-Object {
     $_.CommandLine -like "*-m orchestrator.main*"

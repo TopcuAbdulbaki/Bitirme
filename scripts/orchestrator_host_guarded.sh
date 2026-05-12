@@ -14,6 +14,13 @@ RABBITMQ_PORT="${RABBITMQ_PORT:-5672}"
 RABBITMQ_USER="${RABBITMQ_USER:-guest}"
 RABBITMQ_PASSWORD="${RABBITMQ_PASSWORD:-guest}"
 START_LOCAL_RABBITMQ="${START_LOCAL_RABBITMQ:-true}"
+START_LOCAL_STORAGE="${START_LOCAL_STORAGE:-false}"
+BOOTSTRAP_DB="${BOOTSTRAP_DB:-false}"
+POSTGRES_HOST="${POSTGRES_HOST:-}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+POSTGRES_DB="${POSTGRES_DB:-news_db}"
+POSTGRES_USER="${POSTGRES_USER:-news_user}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-news_password}"
 STOP_EXISTING_ORCHESTRATOR="${STOP_EXISTING_ORCHESTRATOR:-false}"
 FOLLOW_LOGS="${FOLLOW_LOGS:-true}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-75}"
@@ -66,6 +73,51 @@ raise SystemExit(f"RabbitMQ unreachable: {host}:{port}")
 PY
 }
 
+ensure_storage() {
+  if [ "$START_LOCAL_STORAGE" = "true" ]; then
+    command -v docker >/dev/null 2>&1 || die "Docker is required when START_LOCAL_STORAGE=true"
+    cd "$APP_DIR"
+    run docker compose up -d postgres minio
+    POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}"
+    BOOTSTRAP_DB="true"
+  fi
+
+  if [ "$BOOTSTRAP_DB" != "true" ]; then
+    log "Skipping PostgreSQL schema bootstrap"
+    return
+  fi
+
+  [ -n "$POSTGRES_HOST" ] || die "POSTGRES_HOST is required when BOOTSTRAP_DB=true"
+  export POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD
+  "$ORCH_VENV/bin/python" - "$POSTGRES_HOST" "$POSTGRES_PORT" <<'PY'
+import socket, sys, time
+host, port = sys.argv[1], int(sys.argv[2])
+deadline = time.time() + 60
+while time.time() < deadline:
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            print(f"PostgreSQL reachable: {host}:{port}")
+            raise SystemExit(0)
+    except OSError:
+        time.sleep(1)
+raise SystemExit(f"PostgreSQL unreachable: {host}:{port}")
+PY
+  "$ORCH_VENV/bin/python" - <<'PY'
+import asyncio
+from db.services.postgres_manager import PostgresManager
+
+async def main():
+    mgr = PostgresManager(enable_embeddings=False)
+    ok = await mgr.connect()
+    print(f"db_bootstrap_ok={ok}")
+    await mgr.close()
+    if not ok:
+        raise SystemExit(1)
+
+asyncio.run(main())
+PY
+}
+
 prepare_env() {
   local py="$1"
   cd "$APP_DIR"
@@ -92,6 +144,14 @@ start_orchestrator() {
   rm -f "$ORCH_LOG"
   export GRPC_HOST GRPC_PORT ORCHESTRATOR_HTTP_HOST ORCHESTRATOR_HTTP_PORT
   export RABBITMQ_HOST RABBITMQ_PORT RABBITMQ_USER RABBITMQ_PASSWORD
+  if [ -n "$POSTGRES_HOST" ]; then
+    export POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD
+    export ORCHESTRATOR_DB_HOST="$POSTGRES_HOST"
+    export ORCHESTRATOR_DB_PORT="$POSTGRES_PORT"
+    export ORCHESTRATOR_DB_NAME="$POSTGRES_DB"
+    export ORCHESTRATOR_DB_USER="$POSTGRES_USER"
+    export ORCHESTRATOR_DB_PASSWORD="$POSTGRES_PASSWORD"
+  fi
   nohup "$ORCH_VENV/bin/python" -m orchestrator.main > "$ORCH_LOG" 2>&1 &
   echo "$!" > "$ORCH_PID_FILE"
 }
@@ -123,6 +183,7 @@ main() {
   prepare_repo
   prepare_env "$py"
   ensure_rabbitmq
+  ensure_storage
   kill_existing
   start_orchestrator
   wait_ready

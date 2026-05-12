@@ -183,7 +183,12 @@ class PipelineManager:
         """Handle LLM failure without continuing to DB."""
         self.on_task_failed(task_id, f"LLM failed: {error}")
     
-    def _fan_out_to_cua(self, keywords: str) -> bool:
+    def _fan_out_to_cua(
+        self,
+        keywords: str,
+        params: Optional[dict] = None,
+        metadata: Optional[dict] = None,
+    ) -> bool:
         """
         Check for idle CUA node and publish agent task.
         
@@ -207,16 +212,21 @@ class PipelineManager:
         
         # Create agent task
         task_id = self.generate_task_id()
+        cua_params = {
+            'max_articles': 10,
+            'max_searches': 20,
+            'max_cycles': 12
+        }
+        if params:
+            cua_params.update({k: v for k, v in params.items() if v is not None})
+
         task_data_dict = {
             'task_id': task_id,
             'mode': 'surface',
             'topic': keywords,
             'query': keywords,
-            'params': {
-                'max_articles': 10,
-                'max_searches': 20,
-                'max_cycles': 12
-            },
+            'params': cua_params,
+            'metadata': metadata or {},
             'timestamp': datetime.utcnow().isoformat()
         }
         task_data = json.dumps(task_data_dict)
