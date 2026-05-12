@@ -6,7 +6,7 @@ Bu dosya su senaryo icindir:
 - `RabbitMQ`, `PostgreSQL`, `MinIO` yine bu yerel makinededir
 - `crawler`, `db`, `vlm`, `llm`, `cua` worker olarak Vast.ai uzerinde calisir
 
-Bu nedenle Vast worker template'lerinde sadece desktop/Jupyter erisimi ve gerekiyorsa worker'a ozel debug portlari acilir. `73478` ve `72299` gibi degerler gecerli TCP portlari degildir; burada bilerek kullanilmadi.
+Bu nedenle Vast worker template'lerinde desktop zorunlu degildir. Normal akista SSH/Jupyter yeterlidir; worker kurulumunu guarded shell scriptleri yapar. CUA icin kullanici browser'i gormek isterse desktop image tercih edilebilir, ama headless CUA icin o da zorunlu degildir. `73478` ve `72299` gibi degerler gecerli TCP portlari degildir; burada bilerek kullanilmadi.
 
 ## Ortak Alanlar
 
@@ -16,6 +16,24 @@ Asagidaki alanlari tum worker template'lerinde ayni tut:
 - On-start Script: `entrypoint.sh`
 - Jupyter direct HTTPS: `enabled`
 - Use Jupyter Lab interface: `optional`
+
+Varsayilan SSH/Jupyter image:
+
+```text
+vastai/base-image:cuda-12.9.1-auto
+```
+
+CUA'da browser gorunur olsun istenirse opsiyonel desktop image:
+
+```text
+vastai/linux-desktop:cuda-12.9-ubuntu24.04-2026-02-05
+```
+
+Opsiyonel vLLM hazir image sadece manuel model API denemeleri icindir; guarded CUA scripti kendi vLLM venv'ini kurdugu icin ana yol degildir:
+
+```text
+vastai/vllm:v0.20.1-cuda-12.9
+```
 
 Ortak environment variables:
 
@@ -33,7 +51,9 @@ Ortak portal iskeleti:
 localhost:1111:11111:/:Instance Portal|localhost:6100:16100:/:Selkies Low Latency Desktop|localhost:6200:16200:/guacamole:Apache Guacamole Desktop (VNC)|localhost:8080:8080:/:Jupyter|localhost:8080:8080:/terminals/1:Jupyter Terminal|localhost:8384:18384:/:Syncthing
 ```
 
-Ortak desktop docker options cekirdegi:
+SSH-only/base-image worker'larda Selkies/Guacamole buttonlari anlamli olmayabilir; kritik erisim SSH ve Jupyter terminalidir. Options/env ayni tutulabilir, sadece desktop image secildiyse desktop buttonlari kullanilir.
+
+Ortak docker options cekirdegi:
 
 ```text
 -p 8080:8080 -p 1111:1111 -p 6100:6100 -p 6200:6200 -p 5900:5900 -p 8384:8384 -e OPEN_BUTTON_TOKEN="1" -e JUPYTER_DIR="/" -e DATA_DIRECTORY="/workspace/" -e OPEN_BUTTON_PORT="1111" -e SELKIES_ENCODER="x264enc" --ipc=host
@@ -49,10 +69,10 @@ Sonra ilgili Vast node icinde `ORCHESTRATOR_HOST=127.0.0.1` ve gerekiyorsa `RABB
 
 ## 1. Crawler Worker
 
-- Template Name: `Linux Desktop Container (Crawler)`
+- Template Name: `Base Image SSH/Jupyter (Crawler)`
 - Template Description: `Vast worker for crawler node`
-- Image Path:Tag: `vastai/linux-desktop:cuda-12.9-ubuntu24.04-2026-02-05`
-- Version Tag: `cuda-12.9-ubuntu24.04-2026-02-05`
+- Image Path:Tag: `vastai/base-image:cuda-12.9.1-auto`
+- Version Tag: `cuda-12.9.1-auto`
 - Disk: `40 GB`
 - Extra Filters: `gpu_display_active=false`
 
@@ -80,10 +100,10 @@ ORCHESTRATOR_HOST=127.0.0.1 ORCHESTRATOR_PORT=15051 ./vast_crawler_host_guarded.
 
 ## 2. DB Worker
 
-- Template Name: `Linux Desktop Container (DB Worker)`
+- Template Name: `Base Image SSH/Jupyter (DB Worker)`
 - Template Description: `Vast worker for DB node`
-- Image Path:Tag: `vastai/linux-desktop:cuda-12.9-ubuntu24.04-2026-02-05`
-- Version Tag: `cuda-12.9-ubuntu24.04-2026-02-05`
+- Image Path:Tag: `vastai/base-image:cuda-12.9.1-auto`
+- Version Tag: `cuda-12.9.1-auto`
 - Disk: `60 GB`
 - Extra Filters: `gpu_display_active=false`
 
@@ -117,10 +137,10 @@ MINIO_HOST=127.0.0.1 MINIO_PORT=19000 \
 
 ## 3. VLM Worker
 
-- Template Name: `Linux Desktop Container (VLM)`
+- Template Name: `Base Image SSH/Jupyter (VLM)`
 - Template Description: `GPU worker for VLM node`
-- Image Path:Tag: `vastai/linux-desktop:cuda-12.9-ubuntu24.04-2026-02-05`
-- Version Tag: `cuda-12.9-ubuntu24.04-2026-02-05`
+- Image Path:Tag: `vastai/base-image:cuda-12.9.1-auto`
+- Version Tag: `cuda-12.9.1-auto`
 - Disk: `100 GB`
 - Extra Filters: `compute_cap>=700 cuda_max_good>=12.1 gpu_display_active=false`
 
@@ -151,10 +171,10 @@ MINIO_HOST=127.0.0.1 MINIO_PORT=19000 \
 
 ## 4. LLM Worker
 
-- Template Name: `Linux Desktop Container (LLM)`
+- Template Name: `Base Image SSH/Jupyter (LLM)`
 - Template Description: `GPU worker for LLM node`
-- Image Path:Tag: `vastai/linux-desktop:cuda-12.9-ubuntu24.04-2026-02-05`
-- Version Tag: `cuda-12.9-ubuntu24.04-2026-02-05`
+- Image Path:Tag: `vastai/base-image:cuda-12.9.1-auto`
+- Version Tag: `cuda-12.9.1-auto`
 - Disk: `100 GB`
 - Extra Filters: `compute_cap>=700 cuda_max_good>=12.1 gpu_display_active=false`
 
@@ -184,14 +204,14 @@ RABBITMQ_HOST=127.0.0.1 RABBITMQ_PORT=15670 \
 
 ## 5. CUA Worker (Distributed Node)
 
-- Template Name: `Linux Desktop Container (CUA Node)`
+- Template Name: `Base Image SSH/Jupyter (CUA Node)`
 - Template Description: `GPU worker for distributed CUA node`
-- Image Path:Tag: `vastai/linux-desktop:cuda-12.9-ubuntu24.04-2026-02-05`
-- Version Tag: `cuda-12.9-ubuntu24.04-2026-02-05`
+- Image Path:Tag: `vastai/base-image:cuda-12.9.1-auto`
+- Version Tag: `cuda-12.9.1-auto`
 - Disk: `100 GB`
 - Extra Filters: `compute_cap>=700 cuda_max_good>=12.8 gpu_display_active=false`
 
-Bu node `vast_cua_host_guarded.sh` ile yerel vLLM de acacagi icin `1234` portunu debug amacli acmak mantiklidir.
+Bu node `vast_cua_host_guarded.sh` ile yerel vLLM de acacagi icin `1234` portunu debug amacli acmak mantiklidir. Browser'in gorunur olmasi istenirse ayni env/options ile sadece image `vastai/linux-desktop:cuda-12.9-ubuntu24.04-2026-02-05` yapilabilir ve `BROWSER_HEADLESS=false` verilebilir.
 
 `PORTAL_CONFIG`:
 
@@ -222,10 +242,10 @@ RABBITMQ_HOST=127.0.0.1 RABBITMQ_PORT=15670 \
 
 Bu sadece lokal test veya tek makine denemesi icindir. Dagitik sisteme worker olarak baglanmaz.
 
-- Template Name: `Linux Desktop Container (CUA Standalone)`
+- Template Name: `Base Image SSH/Jupyter (CUA Standalone)`
 - Template Description: `GPU standalone CUA + vLLM test node`
-- Image Path:Tag: `vastai/linux-desktop:cuda-12.9-ubuntu24.04-2026-02-05`
-- Version Tag: `cuda-12.9-ubuntu24.04-2026-02-05`
+- Image Path:Tag: `vastai/base-image:cuda-12.9.1-auto`
+- Version Tag: `cuda-12.9.1-auto`
 - Disk: `100 GB`
 - Extra Filters: `compute_cap>=700 cuda_max_good>=12.8 gpu_display_active=false`
 
