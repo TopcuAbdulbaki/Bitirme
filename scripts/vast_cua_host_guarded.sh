@@ -33,6 +33,18 @@ CUA_MAX_QUERY_PLAN="${CUA_MAX_QUERY_PLAN:-10}"
 CUA_MAX_IMAGES_PER_ARTICLE="${CUA_MAX_IMAGES_PER_ARTICLE:-3}"
 MIN_CUDA_DRIVER_VERSION="${MIN_CUDA_DRIVER_VERSION:-12.8}"
 MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-7.0}"
+ORCHESTRATOR_PORT="${ORCHESTRATOR_PORT:-50051}"
+RABBITMQ_PORT="${RABBITMQ_PORT:-5672}"
+RABBITMQ_USER="${RABBITMQ_USER:-guest}"
+RABBITMQ_PASSWORD="${RABBITMQ_PASSWORD:-guest}"
+ALLOW_EXISTING_CUA="${ALLOW_EXISTING_CUA:-false}"
+STOP_EXISTING_CUA="${STOP_EXISTING_CUA:-false}"
+CUA_LOG="${CUA_LOG:-$HOME/cua.log}"
+CUA_PID_FILE="${CUA_PID_FILE:-$HOME/cua.pid}"
+CUA_STARTUP_TIMEOUT_SECONDS="${CUA_STARTUP_TIMEOUT_SECONDS:-90}"
+
+SCRIPT_SUCCESS=false
+STARTED_CUA_PID=""
 
 log() {
   printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
@@ -46,6 +58,113 @@ die() {
 run() {
   log "$*"
   "$@"
+}
+
+cleanup_on_exit() {
+  local status=$?
+  if [ "$SCRIPT_SUCCESS" != "true" ] && [ -n "$STARTED_CUA_PID" ]; then
+    if kill -0 "$STARTED_CUA_PID" >/dev/null 2>&1; then
+      log "Startup failed; stopping CUA PID $STARTED_CUA_PID"
+      kill "$STARTED_CUA_PID" >/dev/null 2>&1 || true
+      wait "$STARTED_CUA_PID" >/dev/null 2>&1 || true
+    fi
+    rm -f "$CUA_PID_FILE"
+  fi
+  exit "$status"
+}
+trap cleanup_on_exit EXIT
+
+check_tcp_ready() {
+  local label="$1"
+  local host="$2"
+  local port="$3"
+  "$CUA_VENV/bin/python" - "$label" "$host" "$port" <<'PY'
+import socket
+import sys
+import time
+
+label, host, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+deadline = time.time() + 20
+last_error = None
+while time.time() < deadline:
+    try:
+        with socket.create_connection((host, port), timeout=3):
+            print(f"{label} reachable: {host}:{port}")
+            raise SystemExit(0)
+    except OSError as exc:
+        last_error = exc
+        time.sleep(1)
+raise SystemExit(f"{label} unreachable: {host}:{port} ({last_error})")
+PY
+}
+
+process_alive() {
+  local pid="$1"
+  [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1
+}
+
+pid_cmdline() {
+  local pid="$1"
+  tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true
+}
+
+find_cua_processes() {
+  python3 - <<'PY'
+import os
+
+for pid in filter(str.isdigit, os.listdir("/proc")):
+    try:
+        raw = open(f"/proc/{pid}/cmdline", "rb").read()
+    except OSError:
+        continue
+    cmd = raw.replace(b"\0", b" ").decode(errors="ignore")
+    if " -m cua.main" in cmd or cmd.strip().endswith("-m cua.main"):
+        print(f"{pid}\t{cmd}")
+PY
+}
+
+ensure_no_duplicate_cua() {
+  local existing=""
+
+  if [ -f "$CUA_PID_FILE" ]; then
+    local pid
+    pid="$(cat "$CUA_PID_FILE" 2>/dev/null || true)"
+    if process_alive "$pid"; then
+      existing="${existing}${pid}\t$(pid_cmdline "$pid")"$'\n'
+    else
+      rm -f "$CUA_PID_FILE"
+    fi
+  fi
+
+  local discovered
+  discovered="$(find_cua_processes || true)"
+  if [ -n "$discovered" ]; then
+    existing="${existing}${discovered}"$'\n'
+  fi
+
+  if [ -z "$existing" ]; then
+    return
+  fi
+
+  if [ "$ALLOW_EXISTING_CUA" = "true" ]; then
+    log "Existing CUA process allowed:"
+    printf '%s\n' "$existing"
+    return 1
+  fi
+
+  if [ "$STOP_EXISTING_CUA" = "true" ]; then
+    log "Stopping existing CUA process(es)"
+    awk '{print $1}' <<< "$existing" | sort -u | while read -r pid; do
+      [ -n "$pid" ] || continue
+      kill "$pid" >/dev/null 2>&1 || true
+    done
+    sleep 2
+    rm -f "$CUA_PID_FILE"
+    return
+  fi
+
+  printf '\n[FAIL] Existing CUA process detected:\n%s\n' "$existing" >&2
+  die "Set ALLOW_EXISTING_CUA=true to reuse, or STOP_EXISTING_CUA=true to replace it."
 }
 
 as_root() {
@@ -385,6 +504,61 @@ wait_for_vllm() {
   die "vLLM did not become ready. CUA will not start."
 }
 
+check_node_connectivity() {
+  [ -n "${ORCHESTRATOR_HOST:-}" ] || die "ORCHESTRATOR_HOST is required for node mode"
+  [ -n "${RABBITMQ_HOST:-}" ] || die "RABBITMQ_HOST is required for node mode"
+
+  check_tcp_ready "Orchestrator gRPC" "$ORCHESTRATOR_HOST" "$ORCHESTRATOR_PORT"
+  check_tcp_ready "RabbitMQ" "$RABBITMQ_HOST" "$RABBITMQ_PORT"
+}
+
+start_cua_node() {
+  cd "$APP_DIR"
+  rm -f "$CUA_LOG"
+
+  export ORCHESTRATOR_HOST
+  export ORCHESTRATOR_PORT
+  export RABBITMQ_HOST
+  export RABBITMQ_PORT
+  export RABBITMQ_USER
+  export RABBITMQ_PASSWORD
+
+  log "Starting CUA node"
+  nohup "$CUA_VENV/bin/python" -m cua.main > "$CUA_LOG" 2>&1 &
+  STARTED_CUA_PID="$!"
+  echo "$STARTED_CUA_PID" > "$CUA_PID_FILE"
+  log "CUA PID: $STARTED_CUA_PID"
+}
+
+wait_for_cua_node_startup() {
+  local attempt
+  log "Waiting for CUA node startup validation"
+
+  for attempt in $(seq 1 "$CUA_STARTUP_TIMEOUT_SECONDS"); do
+    if ! process_alive "$STARTED_CUA_PID"; then
+      tail -n 200 "$CUA_LOG" || true
+      die "CUA exited during startup"
+    fi
+
+    if grep -q "Connected to RabbitMQ" "$CUA_LOG" 2>/dev/null \
+      && grep -q "agent_tasks" "$CUA_LOG" 2>/dev/null \
+      && grep -q "Node hazır" "$CUA_LOG" 2>/dev/null; then
+      log "CUA node registered and waiting for agent_tasks"
+      return
+    fi
+
+    if grep -Eiq "Traceback|ModuleNotFoundError|ImportError|RabbitMQ.*başarısız|RabbitMQ.*basarisiz|Orchestrator olmadan|Connection refused" "$CUA_LOG" 2>/dev/null; then
+      tail -n 200 "$CUA_LOG" || true
+      die "CUA startup error detected"
+    fi
+
+    sleep 1
+  done
+
+  tail -n 200 "$CUA_LOG" || true
+  die "CUA did not pass startup validation within ${CUA_STARTUP_TIMEOUT_SECONDS}s"
+}
+
 run_cua() {
   cd "$APP_DIR"
   # shellcheck disable=SC1091
@@ -414,9 +588,18 @@ run_cua() {
         --lmstudio-url "$LMSTUDIO_URL"
       ;;
     node)
-      [ -n "${ORCHESTRATOR_HOST:-}" ] || die "ORCHESTRATOR_HOST is required for node mode"
-      [ -n "${RABBITMQ_HOST:-}" ] || die "RABBITMQ_HOST is required for node mode"
-      run python -m cua.main
+      check_node_connectivity
+      if ensure_no_duplicate_cua; then
+        start_cua_node
+        wait_for_cua_node_startup
+        SCRIPT_SUCCESS=true
+        log "CUA node is running. PID file: $CUA_PID_FILE"
+        log "Log file: $CUA_LOG"
+        tail -f "$CUA_LOG"
+      else
+        SCRIPT_SUCCESS=true
+        log "CUA node already running. Log file: $CUA_LOG"
+      fi
       ;;
     *)
       die "Unknown CUA_RUN_MODE=$CUA_RUN_MODE. Use standalone or node."

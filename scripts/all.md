@@ -1,5 +1,86 @@
 # Bitirme Node Kurulum Notlari
 
+Su an ana yol Docker paketleme degil, guarded host scriptleridir. Once orchestrator kendi makinede ayaga kaldirilir, sonra CUA/crawler nodelari ayni adres bilgisiyle baglanir. Scriptler basarili startup ve readiness gormeden "tamam" saymaz.
+
+## Guarded Host Ana Akis
+
+### 1. Orchestrator - Windows
+
+RabbitMQ zaten aciksa Docker'a dokunmadan devam eder:
+
+```powershell
+cd C:\Users\HP\Desktop\Projeler\Bitirme
+.\scripts\orchestrator_host_guarded.ps1
+```
+
+RabbitMQ'yu bu scriptin compose ile baslatmasini istersen:
+
+```powershell
+.\scripts\orchestrator_host_guarded.ps1 -StartRabbitWithCompose
+```
+
+Panel varsayilan olarak:
+
+```text
+http://127.0.0.1:8088
+```
+
+### 2. Orchestrator - Linux
+
+```bash
+cd ~
+curl -fsSL -o orchestrator_host_guarded.sh \
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/orchestrator_host_guarded.sh
+chmod +x orchestrator_host_guarded.sh
+./orchestrator_host_guarded.sh
+```
+
+### 3. Crawler Node
+
+```bash
+su - root
+cd ~
+curl -fsSL -o vast_crawler_host_guarded.sh \
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_crawler_host_guarded.sh
+chmod +x vast_crawler_host_guarded.sh
+
+ORCHESTRATOR_HOST=<ORCH_IP> \
+ORCHESTRATOR_PORT=50051 \
+./vast_crawler_host_guarded.sh
+```
+
+### 4. CUA Node
+
+```bash
+su - root
+cd ~
+curl -fsSL -o vast_cua_host_guarded.sh \
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_cua_host_guarded.sh
+chmod +x vast_cua_host_guarded.sh
+
+CUA_RUN_MODE=node \
+ORCHESTRATOR_HOST=<ORCH_IP> \
+RABBITMQ_HOST=<ORCH_IP> \
+./vast_cua_host_guarded.sh
+```
+
+Eski CUA/crawler processi varsa script yeni kopya acmaz. Bilerek degistirmek icin:
+
+```bash
+STOP_EXISTING_CUA=true ./vast_cua_host_guarded.sh
+STOP_EXISTING_CRAWLER=true ./vast_crawler_host_guarded.sh
+```
+
+### 5. Node Bridge Helper
+
+Dogrudan IP erisimi yoksa kendi makineden bu helper acilir, sonra verdigi env degerleri ilgili node scriptinde kullanilir:
+
+```powershell
+.\scripts\open_vast_node_bridge.ps1 -VastHost <VAST_HOST> -VastSshPort <PORT>
+```
+
+## Eski CUA Standalone - Vast.ai Linux
+
 Ilk hedef: Vast.ai uzerinde CUA all-in-one. Bu modda vLLM ve CUA ayni Docker container icinde calisir; CUA her zaman `http://127.0.0.1:1234/v1` uzerinden modele baglanir.
 
 ## CUA Standalone - Vast.ai Linux
@@ -295,9 +376,9 @@ pip install -U -r cua/requirements.txt
 
 Bu dosyaya ayni formatta sirayla eklenecek:
 
-- Orchestrator
-- Crawler
+- Orchestrator: guarded host script eklendi
+- Crawler: guarded host script eklendi
 - DB
 - VLM
 - LLM
-- CUA distributed
+- CUA distributed: guarded host script eklendi

@@ -44,6 +44,8 @@ class RabbitMQConsumer:
                         host=RABBITMQ_HOST,
                         port=RABBITMQ_PORT,
                         credentials=credentials,
+                        heartbeat=0,
+                        blocked_connection_timeout=300,
                         connection_attempts=1,
                         retry_delay=0,
                     )
@@ -66,7 +68,7 @@ class RabbitMQConsumer:
         """Get a message from queue (non-blocking)."""
         try:
             self.ensure_connected()
-            method, properties, body = self.channel.basic_get(queue=queue_name)
+            method, properties, body = self.channel.basic_get(queue=queue_name, auto_ack=False)
             if method:
                 data = json.loads(body.decode('utf-8'))
                 return QueueMessage(

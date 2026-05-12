@@ -3,5 +3,7 @@ grpcio-tools
 protobuf
 pika
 python-dotenv
+aiohttp>=3.9.0
+asyncpg>=0.29.0
 # Core asyncio
 asyncio; python_version < "3.4"

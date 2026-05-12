@@ -11,12 +11,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from orchestrator.config import (
-    GRPC_HOST, GRPC_PORT, HEARTBEAT_TIMEOUT,
+    GRPC_HOST, GRPC_PORT, HTTP_HOST, HTTP_PORT, HEARTBEAT_TIMEOUT,
     QUEUE_VLM_RESULTS, QUEUE_LLM_RESULTS, QUEUE_AGENT_RESULTS
 )
 from orchestrator.services.node_registry import NodeRegistry
 from orchestrator.services.grpc_server import GRPCServer
 from orchestrator.services.pipeline_manager import PipelineManager
+from orchestrator.services.admin_http import AdminHttpServer
 
 # Optional: RabbitMQ (may not be installed locally for testing)
 try:
@@ -54,6 +55,8 @@ class Orchestrator:
         self._setup_callbacks()
         
         self._running = False
+        self.grpc_ready = False
+        self.admin_http = AdminHttpServer(self, HTTP_HOST, HTTP_PORT)
     
     def _setup_callbacks(self):
         """Setup callbacks for gRPC result handlers."""
@@ -190,6 +193,7 @@ class Orchestrator:
             print(f"[Orchestrator] Research task queued with keywords: '{keywords}'")
         else:
             print(f"[Orchestrator] Failed to queue research task")
+        return success
     
     def start_crawl(self):
         """Start crawling (called manually)."""
@@ -219,6 +223,7 @@ class Orchestrator:
         
         # Start gRPC server
         self.grpc_server.start()
+        self.grpc_ready = True
         
         self._running = True
         print("[Orchestrator] Ready and waiting for connections...")
@@ -239,6 +244,9 @@ class Orchestrator:
             
             # Start result queue poller
             result_poller_task = loop.create_task(self._result_queue_poller())
+
+            # Start local HTTP admin panel
+            admin_http_task = loop.create_task(self.admin_http.start())
             
             # Start command input task
             input_task = loop.create_task(self._command_loop())
@@ -250,7 +258,9 @@ class Orchestrator:
             finally:
                 heartbeat_task.cancel()
                 result_poller_task.cancel()
+                admin_http_task.cancel()
                 input_task.cancel()
+                loop.run_until_complete(self.admin_http.stop())
                 loop.close()
                 
         except KeyboardInterrupt:
@@ -306,6 +316,7 @@ class Orchestrator:
         self._running = False
         
         self.grpc_server.stop()
+        self.grpc_ready = False
         
         if self.rabbitmq:
             self.rabbitmq.close()
@@ -319,6 +330,43 @@ class Orchestrator:
             'pending_tasks': len(self.pipeline.get_pending_tasks()),
             'rabbitmq': self.rabbitmq is not None
         }
+
+    def node_snapshot(self) -> list[dict]:
+        return [node.to_dict() for node in self.registry.get_all_nodes()]
+
+    def task_snapshot(self, limit: int = 20) -> list[dict]:
+        tasks = list(self.pipeline._tasks.values())
+        tasks.sort(key=lambda task: task.created_at, reverse=True)
+        return [task.to_dict() for task in tasks[:limit]]
+
+    def queue_snapshot(self) -> dict:
+        if not self.rabbitmq:
+            return {}
+        from orchestrator.config import (
+            QUEUE_VLM_TASKS,
+            QUEUE_VLM_RESULTS,
+            QUEUE_LLM_TASKS,
+            QUEUE_LLM_RESULTS,
+            QUEUE_DB_TASKS,
+            QUEUE_AGENT_TASKS,
+            QUEUE_AGENT_RESULTS,
+        )
+
+        snapshot = {}
+        for queue_name in (
+            QUEUE_VLM_TASKS,
+            QUEUE_VLM_RESULTS,
+            QUEUE_LLM_TASKS,
+            QUEUE_LLM_RESULTS,
+            QUEUE_DB_TASKS,
+            QUEUE_AGENT_TASKS,
+            QUEUE_AGENT_RESULTS,
+        ):
+            try:
+                snapshot[queue_name] = self.rabbitmq.get_queue_size(queue_name)
+            except Exception:
+                snapshot[queue_name] = None
+        return snapshot
 
 
 def main():
