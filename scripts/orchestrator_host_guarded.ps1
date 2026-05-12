@@ -8,7 +8,13 @@ param(
     [int]$HttpPort = 8088,
     [string]$RabbitHost = "localhost",
     [int]$RabbitPort = 5672,
+    [string]$PostgresHost = "localhost",
+    [int]$PostgresPort = 5432,
+    [string]$PostgresDb = "news_db",
+    [string]$PostgresUser = "news_user",
+    [string]$PostgresPassword = "news_password",
     [switch]$StartRabbitWithCompose,
+    [switch]$StartStorageWithCompose,
     [switch]$StopExistingOrchestrator,
     [switch]$FollowLogs
 )
@@ -24,6 +30,16 @@ function Fail([string]$Message) {
     throw $Message
 }
 
+function Wait-Port([string]$TargetHost, [int]$TargetPort, [int]$Attempts = 45) {
+    for ($i = 0; $i -lt $Attempts; $i++) {
+        if ((Test-NetConnection -ComputerName $TargetHost -Port $TargetPort -WarningAction SilentlyContinue).TcpTestSucceeded) {
+            return $true
+        }
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
 Set-Location $ProjectRoot
 
 if (-not (Test-Path "orchestrator\main.py")) {
@@ -32,30 +48,28 @@ if (-not (Test-Path "orchestrator\main.py")) {
 
 Write-Step "Waiting for RabbitMQ port $RabbitHost`:$RabbitPort"
 $rabbitReady = $false
-for ($i = 0; $i -lt 10; $i++) {
-    if ((Test-NetConnection -ComputerName $RabbitHost -Port $RabbitPort -WarningAction SilentlyContinue).TcpTestSucceeded) {
-        $rabbitReady = $true
-        break
-    }
-    Start-Sleep -Seconds 1
-}
+$rabbitReady = Wait-Port -TargetHost $RabbitHost -TargetPort $RabbitPort -Attempts 10
 
 if (-not $rabbitReady -and $StartRabbitWithCompose) {
     Write-Step "Starting RabbitMQ with docker compose"
     docker version --format '{{.Server.Version}}' | Out-Null
     docker compose up -d rabbitmq | Out-Host
 
-    for ($i = 0; $i -lt 45; $i++) {
-        if ((Test-NetConnection -ComputerName $RabbitHost -Port $RabbitPort -WarningAction SilentlyContinue).TcpTestSucceeded) {
-            $rabbitReady = $true
-            break
-        }
-        Start-Sleep -Seconds 1
-    }
+    $rabbitReady = Wait-Port -TargetHost $RabbitHost -TargetPort $RabbitPort -Attempts 45
 }
 
 if (-not $rabbitReady) {
     Fail "RabbitMQ did not become reachable on $RabbitHost`:$RabbitPort. Start it first, or re-run with -StartRabbitWithCompose."
+}
+
+if ($StartStorageWithCompose) {
+    Write-Step "Starting PostgreSQL and MinIO with docker compose"
+    docker version --format '{{.Server.Version}}' | Out-Null
+    docker compose up -d postgres minio | Out-Host
+
+    if (-not (Wait-Port -TargetHost $PostgresHost -TargetPort $PostgresPort -Attempts 45)) {
+        Fail "PostgreSQL did not become reachable on $PostgresHost`:$PostgresPort."
+    }
 }
 
 if (-not (Test-Path ".venv-orch\Scripts\python.exe")) {
@@ -69,6 +83,34 @@ Write-Step "Installing orchestrator requirements"
 
 Write-Step "Checking orchestrator imports"
 .\.venv-orch\Scripts\python.exe -c "import orchestrator.main; import orchestrator.services.admin_http; print('orchestrator import ok')" | Out-Host
+
+$env:POSTGRES_HOST = $PostgresHost
+$env:POSTGRES_PORT = "$PostgresPort"
+$env:POSTGRES_DB = $PostgresDb
+$env:POSTGRES_USER = $PostgresUser
+$env:POSTGRES_PASSWORD = $PostgresPassword
+$env:ORCHESTRATOR_DB_HOST = $PostgresHost
+$env:ORCHESTRATOR_DB_PORT = "$PostgresPort"
+$env:ORCHESTRATOR_DB_NAME = $PostgresDb
+$env:ORCHESTRATOR_DB_USER = $PostgresUser
+$env:ORCHESTRATOR_DB_PASSWORD = $PostgresPassword
+
+Write-Step "Bootstrapping PostgreSQL schema"
+$bootstrap = @'
+import asyncio
+from db.services.postgres_manager import PostgresManager
+
+async def main():
+    mgr = PostgresManager(enable_embeddings=False)
+    ok = await mgr.connect()
+    print(f"db_bootstrap_ok={ok}")
+    await mgr.close()
+    if not ok:
+        raise SystemExit(1)
+
+asyncio.run(main())
+'@
+$bootstrap | .\.venv-orch\Scripts\python.exe - | Out-Host
 
 $existing = Get-CimInstance Win32_Process | Where-Object {
     $_.CommandLine -like "*-m orchestrator.main*"
@@ -97,6 +139,16 @@ $launch = @"
 `$env:RABBITMQ_PORT='$RabbitPort'
 `$env:RABBITMQ_USER='guest'
 `$env:RABBITMQ_PASSWORD='guest'
+`$env:POSTGRES_HOST='$PostgresHost'
+`$env:POSTGRES_PORT='$PostgresPort'
+`$env:POSTGRES_DB='$PostgresDb'
+`$env:POSTGRES_USER='$PostgresUser'
+`$env:POSTGRES_PASSWORD='$PostgresPassword'
+`$env:ORCHESTRATOR_DB_HOST='$PostgresHost'
+`$env:ORCHESTRATOR_DB_PORT='$PostgresPort'
+`$env:ORCHESTRATOR_DB_NAME='$PostgresDb'
+`$env:ORCHESTRATOR_DB_USER='$PostgresUser'
+`$env:ORCHESTRATOR_DB_PASSWORD='$PostgresPassword'
 Set-Location '$ProjectRoot'
 .\.venv-orch\Scripts\python.exe -m orchestrator.main *>> '$logPath'
 "@

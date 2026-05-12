@@ -19,6 +19,14 @@ RabbitMQ'yu bu scriptin compose ile baslatmasini istersen:
 .\scripts\orchestrator_host_guarded.ps1 -StartRabbitWithCompose
 ```
 
+RabbitMQ, PostgreSQL ve MinIO'yu bu makinede baslatip panelin DB'yi okumasini istersen:
+
+```powershell
+.\scripts\orchestrator_host_guarded.ps1 -StartRabbitWithCompose -StartStorageWithCompose -StopExistingOrchestrator
+```
+
+Bu komut RabbitMQ, PostgreSQL, MinIO ve orchestrator'i kaldirir; PostgreSQL semasini da bootstrap eder.
+
 Panel varsayilan olarak:
 
 ```text
@@ -71,13 +79,66 @@ STOP_EXISTING_CUA=true ./vast_cua_host_guarded.sh
 STOP_EXISTING_CRAWLER=true ./vast_crawler_host_guarded.sh
 ```
 
-### 5. Node Bridge Helper
+### 5. DB Node
+
+```bash
+su - root
+cd ~
+curl -fsSL -o vast_db_host_guarded.sh \
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_db_host_guarded.sh
+chmod +x vast_db_host_guarded.sh
+
+ORCHESTRATOR_HOST=<ORCH_IP> \
+RABBITMQ_HOST=<ORCH_IP> \
+POSTGRES_HOST=<ORCH_IP> \
+MINIO_HOST=<ORCH_IP> \
+./vast_db_host_guarded.sh
+```
+
+Bridge kullaniyorsan helper'in yazdigi `POSTGRES_PORT` ve `MINIO_PORT` degerlerini de ekle.
+
+### 6. VLM Node
+
+```bash
+su - root
+cd ~
+curl -fsSL -o vast_vlm_host_guarded.sh \
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_vlm_host_guarded.sh
+chmod +x vast_vlm_host_guarded.sh
+
+ORCHESTRATOR_HOST=<ORCH_IP> \
+RABBITMQ_HOST=<ORCH_IP> \
+MINIO_HOST=<ORCH_IP> \
+./vast_vlm_host_guarded.sh
+```
+
+Varsayilan model transformers modunda `Qwen/Qwen3-VL-8B-Instruct` kullanir. GPU lazimdir.
+
+### 7. LLM Node
+
+```bash
+su - root
+cd ~
+curl -fsSL -o vast_llm_host_guarded.sh \
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_llm_host_guarded.sh
+chmod +x vast_llm_host_guarded.sh
+
+ORCHESTRATOR_HOST=<ORCH_IP> \
+RABBITMQ_HOST=<ORCH_IP> \
+./vast_llm_host_guarded.sh
+```
+
+Varsayilan model transformers modunda `Qwen/Qwen3-8B` kullanir. GPU lazimdir.
+
+### 8. Node Bridge Helper
 
 Dogrudan IP erisimi yoksa kendi makineden bu helper acilir, sonra verdigi env degerleri ilgili node scriptinde kullanilir:
 
 ```powershell
 .\scripts\open_vast_node_bridge.ps1 -VastHost <VAST_HOST> -VastSshPort <PORT>
 ```
+
+Bridge acikken helper'in yazdigi `ORCHESTRATOR_*`, `RABBITMQ_*`, `POSTGRES_*` ve `MINIO_*` env degerlerini Vast node scriptinin onune ekle. DB node'u bu yerel PostgreSQL/MinIO'yu kullanacaksa `vast_db_host_guarded.sh` icin bu degerler zorunludur.
 
 ## Eski CUA Standalone - Vast.ai Linux
 
@@ -378,7 +439,7 @@ Bu dosyaya ayni formatta sirayla eklenecek:
 
 - Orchestrator: guarded host script eklendi
 - Crawler: guarded host script eklendi
-- DB
-- VLM
-- LLM
+- DB: guarded host script eklendi
+- VLM: guarded host script eklendi
+- LLM: guarded host script eklendi
 - CUA distributed: guarded host script eklendi
