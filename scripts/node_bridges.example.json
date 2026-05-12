@@ -1,0 +1,50 @@
+{
+  "defaults": {
+    "nodeGrpcPort": 15051,
+    "nodeRabbitPort": 15670,
+    "nodePostgresPort": 15432,
+    "nodeMinioPort": 19000,
+    "localGrpcPort": 50051,
+    "localRabbitPort": 5672,
+    "localPostgresPort": 5432,
+    "localMinioPort": 9000,
+    "reconnectDelaySeconds": 5
+  },
+  "nodes": [
+    {
+      "name": "cua",
+      "host": "203.0.113.10",
+      "sshPort": 40001,
+      "localUiPort": 18080,
+      "includeStoragePorts": false
+    },
+    {
+      "name": "llm",
+      "host": "203.0.113.11",
+      "sshPort": 40002,
+      "localUiPort": 18081,
+      "includeStoragePorts": false
+    },
+    {
+      "name": "vlm",
+      "host": "203.0.113.12",
+      "sshPort": 40003,
+      "localUiPort": 18082,
+      "includeStoragePorts": false
+    },
+    {
+      "name": "db",
+      "host": "203.0.113.13",
+      "sshPort": 40004,
+      "localUiPort": 18083,
+      "includeStoragePorts": true
+    },
+    {
+      "name": "crawler",
+      "host": "203.0.113.14",
+      "sshPort": 40005,
+      "localUiPort": 18084,
+      "includeStoragePorts": false
+    }
+  ]
+}

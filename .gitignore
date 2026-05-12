@@ -43,6 +43,8 @@ Thumbs.db
 # Logs
 *.log
 logs/
+.runtime/
+scripts/node_bridges.local.json
 
 # Local test outputs
 toplanan_haberler.json

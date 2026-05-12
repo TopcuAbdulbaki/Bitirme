@@ -154,13 +154,36 @@ Varsayilan model transformers modunda `Qwen/Qwen3-8B` kullanir. GPU lazimdir.
 
 ### 8. Node Bridge Helper
 
-Dogrudan IP erisimi yoksa kendi makineden bu helper acilir, sonra verdigi env degerleri ilgili node scriptinde kullanilir:
+Dogrudan IP erisimi yoksa node bridge gerekir. Tek node icin eski helper hala kullanilabilir:
 
 ```powershell
 .\scripts\open_vast_node_bridge.ps1 -VastHost <VAST_HOST> -VastSshPort <PORT>
 ```
 
 Bridge acikken helper'in yazdigi `ORCHESTRATOR_*`, `RABBITMQ_*`, `POSTGRES_*` ve `MINIO_*` env degerlerini Vast node scriptinin onune ekle. DB node'u bu yerel PostgreSQL/MinIO'yu kullanacaksa `vast_db_host_guarded.sh` icin bu degerler zorunludur.
+
+Birden cok node icin tercih edilen yol toplu supervisor'dir:
+
+```powershell
+Copy-Item .\scripts\node_bridges.example.json .\scripts\node_bridges.local.json
+# node_bridges.local.json icindeki Vast host/ssh portlarini kendi kiraladigin makinelerle degistir
+
+.\scripts\manage_node_bridges.ps1 -Action start
+.\scripts\manage_node_bridges.ps1 -Action status
+```
+
+Bu runner her node icin SSH bridge'i arka planda tutar, koparsa yeniden baglanmayi dener, pid/log dosyalarini `.runtime/node-bridges` altinda saklar. Tek node icin:
+
+```powershell
+.\scripts\manage_node_bridges.ps1 -Action restart -Node cua
+.\scripts\manage_node_bridges.ps1 -Action stop -Node db
+```
+
+Canli bridge supervisor penceresi gerekiyorsa:
+
+```powershell
+.\scripts\manage_node_bridges.ps1 -Action restart -Node cua -Visible
+```
 
 ## Eski CUA Standalone - Vast.ai Linux
 
@@ -247,6 +270,17 @@ VLLM_VENV=$HOME/.venvs/vllm-cu128
 RESET_VLLM_VENV=false
 RESET_CUA_VENV=false
 MIN_CUDA_DRIVER_VERSION=12.8
+```
+
+CUA guarded script `cua.generated` proto paketini artik kendisi kontrol eder. Paket varsa aynen kullanir; eksikse yeniden uretir. Elle tek seferlik kontrol etmek istersen:
+
+```bash
+cd ~/Bitirme
+source cua/.venv/bin/activate
+
+pip install grpcio grpcio-tools protobuf
+python compile_proto.py
+python -c "from cua.generated import orchestrator_pb2, orchestrator_pb2_grpc; print('CUA proto OK')"
 ```
 
 Standalone debug icin guarded host scriptte browser varsayilan olarak gorunur gelir:

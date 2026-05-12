@@ -444,6 +444,46 @@ PY
   as_root python -m playwright install-deps chromium
 }
 
+ensure_cua_proto_imports() {
+  cd "$APP_DIR"
+  if "$CUA_VENV/bin/python" - <<'PY'
+from cua.generated import orchestrator_pb2
+from cua.generated import orchestrator_pb2_grpc
+print("CUA generated proto imports OK")
+PY
+  then
+    return
+  fi
+
+  log "Regenerating CUA gRPC stubs"
+  mkdir -p cua/generated
+  touch cua/generated/__init__.py
+  run "$CUA_VENV/bin/python" -m grpc_tools.protoc \
+    -Iproto \
+    --python_out=cua/generated \
+    --grpc_python_out=cua/generated \
+    proto/orchestrator.proto
+
+  "$CUA_VENV/bin/python" - <<'PY'
+from pathlib import Path
+
+p = Path("cua/generated/orchestrator_pb2_grpc.py")
+text = p.read_text(encoding="utf-8")
+lines = []
+for line in text.splitlines():
+    if line.startswith("import orchestrator_pb2"):
+        line = f"from . {line}"
+    lines.append(line)
+p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
+  "$CUA_VENV/bin/python" - <<'PY'
+from cua.generated import orchestrator_pb2
+from cua.generated import orchestrator_pb2_grpc
+print("CUA generated proto imports OK after regeneration")
+PY
+}
+
 start_vllm() {
   mkdir -p "$MODEL_DOWNLOAD_DIR"
   if ensure_vllm_port_available_or_reusable; then
@@ -617,6 +657,7 @@ main() {
   prepare_repo
   install_vllm_profile "$py"
   prepare_cua_env "$py"
+  ensure_cua_proto_imports
   start_vllm
   wait_for_vllm
   run_cua
