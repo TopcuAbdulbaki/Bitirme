@@ -5,6 +5,8 @@
 
 This guide details how to deploy the distributed system on Vast.ai using Docker.
 
+For the current "orchestrator local, workers on Vast" setup and copy-paste Vast template fields, also see [vast_worker_template_presets.md](/C:/Users/HP/Desktop/Projeler/Bitirme/docs/vast_worker_template_presets.md).
+
 ## 1. Prerequisites
 
 - **Docker Desktop** installed and running locally.
