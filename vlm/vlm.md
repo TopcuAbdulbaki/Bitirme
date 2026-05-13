@@ -7,7 +7,7 @@ Responsible for image analysis using Vision Language Models. Python 3.13.5
 | Local/Prototype | qwen3-vl-2b-instruct | LM Studio (headless) |
 | Production | Qwen3-VL-8B-Instruct | Transformers |
 
-Huggingface: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
+Huggingface: https://huggingface.co/Qwen/Qwen3.5-9B
 
 ## Technology Stack
 - asyncio for async operations

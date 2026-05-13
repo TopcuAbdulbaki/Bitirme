@@ -30,6 +30,13 @@ Config = {
     "max_images": 3  # Maximum images per article
 }
 
+CRAWLER_BROWSER_TYPE = os.getenv("CRAWLER_BROWSER_TYPE", "chromium").strip().lower()
+if CRAWLER_BROWSER_TYPE not in {"chromium", "firefox", "webkit"}:
+    CRAWLER_BROWSER_TYPE = "chromium"
+
+CRAWLER_HEADLESS = os.getenv("CRAWLER_HEADLESS", "true").strip().lower() in {"1", "true", "yes", "on"}
+CRAWLER_PERSISTENT_PROFILE_DIR = os.getenv("CRAWLER_PERSISTENT_PROFILE_DIR", "").strip()
+
 
 # Global Block List 
 GLOBAL_BLOCK_PATHS = [
@@ -162,8 +169,11 @@ class NewsCrawler:
         
         # 🪄 DÜZELTME: 'user_agent_generator' satırı kaldırıldı.
         self.browser_cfg = BrowserConfig(
-            headless=True,
+            browser_type=CRAWLER_BROWSER_TYPE,
+            headless=CRAWLER_HEADLESS,
             verbose=False,
+            use_persistent_context=bool(CRAWLER_PERSISTENT_PROFILE_DIR),
+            user_data_dir=CRAWLER_PERSISTENT_PROFILE_DIR or None,
             user_agent_mode="random",  # Bu satır rastgele kimlik için yeterlidir
             viewport_width=1920,       
             viewport_height=1080,

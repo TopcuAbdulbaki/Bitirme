@@ -56,6 +56,8 @@ class CUANode:
         try:
             await self.grpc_client.connect()
             self.node_id = await self.grpc_client.register("cua", CUA_GRPC_PORT)
+            self._running = True
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             self.health.update(
                 node_id=self.node_id,
                 orchestrator_registered=True,
@@ -96,9 +98,11 @@ class CUANode:
             raise
 
         # 3. Döngüleri başlat
-        self._running = True
+        if not self._running:
+            self._running = True
+        if self._heartbeat_task is None and self.grpc_client.node_id:
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         self._write_runtime_health()
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         self._consumer_task = asyncio.create_task(self._task_consumer_loop())
 
         print(f"[CUA] Node hazır. node_id={self.node_id}")

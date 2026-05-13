@@ -95,6 +95,7 @@ class PipelineManager:
             task.raw_data = json_data
         
         task.stage = PipelineStage.CRAWLED
+        task.error = None
         print(f"[Pipeline] {task_id} -> CRAWLED")
         
         # Send directly to VLM queue for image analysis
@@ -135,6 +136,7 @@ class PipelineManager:
         
         task.vlm_result = analysis_json
         task.stage = PipelineStage.VLM_COMPLETE
+        task.error = None
         
         # Combine original data + VLM result for LLM
         combined = json.dumps({
@@ -161,6 +163,7 @@ class PipelineManager:
         
         task.llm_result = result_json
         task.stage = PipelineStage.COMPLETE
+        task.error = None
         task.completed_at = datetime.utcnow()
         print(f"[Pipeline] {task_id} -> COMPLETE")
         

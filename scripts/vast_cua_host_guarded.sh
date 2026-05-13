@@ -41,7 +41,7 @@ ALLOW_EXISTING_CUA="${ALLOW_EXISTING_CUA:-false}"
 STOP_EXISTING_CUA="${STOP_EXISTING_CUA:-false}"
 CUA_LOG="${CUA_LOG:-$HOME/cua.log}"
 CUA_PID_FILE="${CUA_PID_FILE:-$HOME/cua.pid}"
-CUA_STARTUP_TIMEOUT_SECONDS="${CUA_STARTUP_TIMEOUT_SECONDS:-90}"
+CUA_STARTUP_TIMEOUT_SECONDS="${CUA_STARTUP_TIMEOUT_SECONDS:-180}"
 
 SCRIPT_SUCCESS=false
 STARTED_CUA_PID=""
@@ -564,7 +564,7 @@ start_cua_node() {
   export RABBITMQ_PASSWORD
 
   log "Starting CUA node"
-  nohup "$CUA_VENV/bin/python" -m cua.main > "$CUA_LOG" 2>&1 &
+  nohup env PYTHONUNBUFFERED=1 "$CUA_VENV/bin/python" -u -m cua.main > "$CUA_LOG" 2>&1 &
   STARTED_CUA_PID="$!"
   echo "$STARTED_CUA_PID" > "$CUA_PID_FILE"
   log "CUA PID: $STARTED_CUA_PID"

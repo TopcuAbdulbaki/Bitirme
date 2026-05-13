@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -134,12 +135,13 @@ class StorageBackupManager:
                 }
             )
         except Exception as exc:
+            error_text = str(exc).strip() or exc.__class__.__name__
             self._status.update(
                 {
                     "state": "failed",
                     "message": "Backup basarisiz",
                     "completed_at": datetime.now().isoformat(timespec="seconds"),
-                    "error": str(exc),
+                    "error": error_text,
                 }
             )
 
@@ -190,21 +192,16 @@ class StorageBackupManager:
         )
 
     async def _run_command(self, args: list[str], *, allow_failure: bool = False):
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
+            proc = await asyncio.to_thread(
+                subprocess.run,
+                args,
+                capture_output=True,
                 timeout=BACKUP_COMMAND_TIMEOUT,
             )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
+        except subprocess.TimeoutExpired:
             raise RuntimeError(f"command timed out: {' '.join(args[:3])}")
 
         if proc.returncode != 0 and not allow_failure:
-            details = (stderr or stdout).decode(errors="replace").strip()
+            details = (proc.stderr or proc.stdout or b"").decode(errors="replace").strip()
             raise RuntimeError(details or f"command failed: {' '.join(args[:3])}")

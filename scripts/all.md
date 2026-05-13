@@ -34,6 +34,12 @@ Panel varsayilan olarak:
 http://127.0.0.1:8088
 ```
 
+Guarded orchestrator scriptleri panel sorgularinda vektor aramayi varsayilan olarak acik baslatir:
+
+```powershell
+$env:ORCHESTRATOR_SEARCH_EMBEDDING_MODE="local"
+```
+
 Panelden yapilabilenler:
 
 - CUA research task basma; makale limiti, arama limiti, dongu limiti, model adi ve context degeri panelden verilebilir.
@@ -134,7 +140,7 @@ MINIO_HOST=<ORCH_IP> \
 ./vast_vlm_host_guarded.sh
 ```
 
-Varsayilan model transformers modunda `Qwen/Qwen3-VL-8B-Instruct` kullanir. GPU lazimdir.
+Varsayilan model transformers modunda `Qwen/Qwen3.5-9B` kullanir. GPU lazimdir.
 
 ### 7. LLM Node
 
@@ -184,6 +190,23 @@ Canli bridge supervisor penceresi gerekiyorsa:
 ```powershell
 .\scripts\manage_node_bridges.ps1 -Action restart -Node cua -Visible
 ```
+
+Lokal crawler arama HTML'i Google tarafinda CAPTCHA'ya dusuyorsa browser motorunu deneysel olarak degistirebilirsin:
+
+```powershell
+$env:CRAWLER_BROWSER_TYPE="firefox"
+```
+
+Desteklenen degerler: `chromium`, `firefox`, `webkit`.
+
+Gorunur tarayici ve kalici profil denemesi icin:
+
+```powershell
+$env:CRAWLER_HEADLESS="false"
+$env:CRAWLER_PERSISTENT_PROFILE_DIR="$HOME\.bitirme-crawler-profile"
+```
+
+Bu mod Crawl4AI'yi persistent browser context ile baslatir. Google CAPTCHA davranisini azaltip azaltmadigini test etmek icindir; kalici cozum garantisi degildir.
 
 ## Eski CUA Standalone - Vast.ai Linux
 

@@ -33,7 +33,7 @@ LM_STUDIO_HOST = os.getenv('LM_STUDIO_HOST', 'http://localhost:1234')
 LM_STUDIO_MODEL = os.getenv('LM_STUDIO_MODEL', 'qwen3-vl-2b-instruct')
 
 # Production Model (Transformers)
-PRODUCTION_MODEL = os.getenv('PRODUCTION_MODEL', 'Qwen/Qwen3-VL-8B-Instruct')
+PRODUCTION_MODEL = os.getenv('PRODUCTION_MODEL', 'Qwen/Qwen3.5-9B')
 
 # Mode: 'transformers' for production
 MODEL_MODE = os.getenv('MODEL_MODE', 'transformers')

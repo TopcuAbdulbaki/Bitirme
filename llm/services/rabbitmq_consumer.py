@@ -3,8 +3,9 @@ RabbitMQ Consumer for VLM/LLM nodes.
 Lightweight consumer that polls for messages.
 """
 import json
+import time
 import pika
-from typing import Optional, Callable
+from typing import Optional
 from dataclasses import dataclass
 
 
@@ -43,6 +44,9 @@ class RabbitMQConsumer:
         self._connection = None
         self._channel = None
         self._connected = False
+        self._declared_queues: set[str] = set()
+        self._next_reconnect_at = 0.0
+        self._reconnect_delay_seconds = 3.0
     
     def connect(self) -> bool:
         """Connect to RabbitMQ."""
@@ -63,25 +67,49 @@ class RabbitMQConsumer:
             self._connection = pika.BlockingConnection(parameters)
             self._channel = self._connection.channel()
             self._connected = True
+            self._next_reconnect_at = 0.0
+            for queue_name in self._declared_queues:
+                self._channel.queue_declare(queue=queue_name, durable=True)
             print(f"[RabbitMQ] Connected to {self.host}:{self.port}")
             return True
             
         except Exception as e:
             print(f"[RabbitMQ] Connection failed: {e}")
             self._connected = False
+            self._next_reconnect_at = time.monotonic() + self._reconnect_delay_seconds
             return False
     
     def declare_queue(self, queue_name: str):
         """Declare a queue (create if not exists)."""
+        self._declared_queues.add(queue_name)
         if self._channel:
             self._channel.queue_declare(queue=queue_name, durable=True)
+
+    def _mark_disconnected(self):
+        self._connected = False
+        self._channel = None
+        try:
+            if self._connection and self._connection.is_open:
+                self._connection.close()
+        except Exception:
+            pass
+        self._connection = None
+        self._next_reconnect_at = time.monotonic() + self._reconnect_delay_seconds
+
+    def _ensure_connection(self) -> bool:
+        if self._connected and self._channel and self._connection and self._connection.is_open:
+            return True
+        if time.monotonic() < self._next_reconnect_at:
+            return False
+        print("[RabbitMQ] Reconnecting...")
+        return self.connect()
     
     def get_message(self, queue_name: str) -> Optional[QueueMessage]:
         """
         Get a single message from queue (non-blocking).
         Returns None if queue is empty or not connected.
         """
-        if not self._connected or not self._channel:
+        if not self._ensure_connection():
             return None
             
         try:
@@ -97,13 +125,13 @@ class RabbitMQConsumer:
                 
         except Exception as e:
             print(f"[RabbitMQ] Get message error: {e}")
-            self._connected = False
+            self._mark_disconnected()
             
         return None
     
     def publish(self, queue_name: str, message: QueueMessage) -> bool:
         """Publish a message to a queue."""
-        if not self._connected or not self._channel:
+        if not self._ensure_connection():
             return False
             
         try:
@@ -119,6 +147,7 @@ class RabbitMQConsumer:
             return True
         except Exception as e:
             print(f"[RabbitMQ] Publish error: {e}")
+            self._mark_disconnected()
             return False
     
     @property
@@ -131,3 +160,5 @@ class RabbitMQConsumer:
             self._connection.close()
             print("[RabbitMQ] Connection closed")
         self._connected = False
+        self._connection = None
+        self._channel = None

@@ -13,6 +13,7 @@ param(
     [string]$PostgresDb = "news_db",
     [string]$PostgresUser = "news_user",
     [string]$PostgresPassword = "news_password",
+    [string]$SearchEmbeddingMode = "local",
     [switch]$StartRabbitWithCompose,
     [switch]$StartStorageWithCompose,
     [switch]$BootstrapDb,
@@ -154,6 +155,7 @@ $launch = @"
 `$env:ORCHESTRATOR_DB_NAME='$PostgresDb'
 `$env:ORCHESTRATOR_DB_USER='$PostgresUser'
 `$env:ORCHESTRATOR_DB_PASSWORD='$PostgresPassword'
+`$env:ORCHESTRATOR_SEARCH_EMBEDDING_MODE='$SearchEmbeddingMode'
 Set-Location '$ProjectRoot'
 .\.venv-orch\Scripts\python.exe -m orchestrator.main *>> '$logPath'
 "@
