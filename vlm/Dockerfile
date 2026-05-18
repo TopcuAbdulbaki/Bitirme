@@ -7,7 +7,9 @@ FROM python:3.11-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    MODEL_MODE=transformers
+    MODEL_MODE=transformers \
+    PIP_DEFAULT_TIMEOUT=600 \
+    PIP_RETRIES=10
 
 # Set working directory
 WORKDIR /app

@@ -10,15 +10,32 @@ from datetime import datetime
 from urllib.parse import unquote, urlparse
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
+import sys
+from pathlib import Path
+
+# Fix path for standalone execution if run directly
+if __name__ == "__main__":
+    _root = str(Path(__file__).parent.parent)
+    if _root not in sys.path:
+        sys.path.append(_root)
+
 # Distributed mode imports
-# try:
-from crawler.config import CRAWLER_MODE, CRAWLER_DEMO_MODE, CRAWLER_DEMO_LIMIT, POLL_INTERVAL
-from crawler.services.grpc_client import GRPCClient, NodeStatus
-# GRPCServer no longer needed - using poll model
-DISTRIBUTED_AVAILABLE = True
-# except ImportError:
-#     DISTRIBUTED_AVAILABLE = False
-#     CRAWLER_MODE = 'standalone'
+try:
+    from crawler.config import CRAWLER_MODE, CRAWLER_DEMO_MODE, CRAWLER_DEMO_LIMIT, POLL_INTERVAL
+    from crawler.services.grpc_client import GRPCClient, NodeStatus
+    DISTRIBUTED_AVAILABLE = True
+except ImportError:
+    # Fallback if crawler package or grpc is not in path
+    try:
+        import config as _cfg
+        CRAWLER_MODE, CRAWLER_DEMO_MODE, CRAWLER_DEMO_LIMIT, POLL_INTERVAL = _cfg.CRAWLER_MODE, _cfg.CRAWLER_DEMO_MODE, _cfg.CRAWLER_DEMO_LIMIT, _cfg.POLL_INTERVAL
+    except ImportError:
+        CRAWLER_MODE, CRAWLER_DEMO_MODE, CRAWLER_DEMO_LIMIT, POLL_INTERVAL = 'distributed', False, 5, 5
+    DISTRIBUTED_AVAILABLE = False
+
+# Override mode if -standalone flag is provided
+if "-standalone" in sys.argv:
+    CRAWLER_MODE = "standalone"
 
 
 # ⚙️ Configurations

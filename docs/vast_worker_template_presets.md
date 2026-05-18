@@ -16,6 +16,32 @@ Asagidaki alanlari tum worker template'lerinde ayni tut:
 - On-start Script: `entrypoint.sh`
 - Jupyter direct HTTPS: `enabled`
 - Use Jupyter Lab interface: `optional`
+- Kiralanan makine Docker tabanli Vast instance olarak acilmalidir. Vast CLI `docker=true` diye bir search key kabul etmez; Docker gereksinimini offer filtresiyle degil template/image secimi ve startup kontroluyle dogrula.
+
+Vast'ta offer arama donanim/availability filtresidir; instance'in hangi container image ile acilacagi template tarafinda belirlenir. Bu dosyadaki ana worker akisi `vastai/base-image:cuda-12.9.1-auto` gibi Docker image path'leriyle acilan Vast container'larini varsayar. Guarded host scriptleri Docker daemon gerektirmez; repo/venv/proto/import/connectivity kontrollerini yapip node'u dogrudan host/container icinde baslatir.
+
+Eger eski `docker build` / `docker run` akisini bilerek kullanacaksan, bunu search filtresiyle garanti edemezsin. Bunun yerine Docker CLI/daemon'i olan bir image/template sec veya on-start/preflight kontroluyle uygun olmayan instance'i hemen fail ettir.
+
+Vast CLI ile offer ararken Docker filtresi kullanma:
+
+```bash
+vastai search offers 'rentable=true verified=true'
+```
+
+GPU worker ararken sadece gecerli GPU kosullarini ekle:
+
+```bash
+vastai search offers 'rentable=true verified=true compute_cap>=700 cuda_max_good>=12.1'
+```
+
+Docker CLI/daemon gerektiren eski Docker build/run akisini kullanacaksan node icinde once su preflight kontrolunu yap:
+
+```bash
+command -v docker >/dev/null 2>&1 || { echo "Docker CLI yok; bu template Docker build/run akisi icin uygun degil"; exit 1; }
+docker version >/dev/null 2>&1 || { echo "Docker daemon erisilemiyor"; exit 1; }
+```
+
+Bu kontrolu Vast template'in on-start scriptinin basina da koyabilirsin. Kontrol gecmezse worker kurulumu baslamaz; boylece yanlis instance uzerinde yarim kurulum kalmaz.
 
 Varsayilan SSH/Jupyter image:
 
