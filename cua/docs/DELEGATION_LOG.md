@@ -251,7 +251,7 @@
 **Files Created/Updated:**
 1. `cua/Dockerfile` - Multi-stage build (browser-base + nvidia/cuda runtime)
 2. `docker-compose.yml` - Updated with CUA service
-3. `scripts/6_cua.ps1` - PowerShell deployment script (new)
+3. `scripts/legacy/6_cua.ps1` - PowerShell deployment script (new)
 4. `handoff_all.md` - Updated with Section 3.6
 5. `handoff_files.md` - Updated with Section 6
 

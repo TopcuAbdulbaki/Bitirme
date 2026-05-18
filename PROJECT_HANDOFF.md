@@ -49,7 +49,7 @@ Bakılacak dosyalar:
 - `crawler/services/grpc_client.py`
 - `crawler/config.py`
 - `crawler/Dockerfile`
-- `scripts/vast_crawler_host_guarded.sh`
+- `scripts/linux/crawler.sh`
 
 Not: `crawler/services/grpc_server.py` eski push modele ait olduğu için kaldırıldı. Bu, gRPC'nin kaldırıldığı anlamına gelmez.
 
@@ -92,7 +92,7 @@ Sonuçları:
 
 - VLM MinIO görsellerini okuyacaksa DB makinesindeki MinIO `9000` erişilebilir olmalı.
 - Orchestrator paneli DB arama/istatistik gösterecekse remote PostgreSQL'e erişebilmeli.
-- `scripts/vast_db_host_guarded.sh` storage servislerini kurmaktan çok DB node'u hazır storage'a bağlama odaklıdır; storage'ın nerede kalktığı env ile net verilmeli.
+- `scripts/linux/db.sh` storage servislerini kurmaktan çok DB node'u hazır storage'a bağlama odaklıdır; storage'ın nerede kalktığı env ile net verilmeli.
 
 Bakılacak dosyalar:
 
@@ -101,7 +101,7 @@ Bakılacak dosyalar:
 - `db/services/minio_manager.py`
 - `docs/database_schema.md`
 - `docs/minio_storage.md`
-- `scripts/vast_db_host_guarded.sh`
+- `scripts/linux/db.sh`
 
 ## 3. Kronolojik Karar Özeti
 
@@ -162,7 +162,7 @@ Bakılacak dosyalar:
 
 - Birden fazla crawler varsa hepsinin aynı kaynaklara bakmaması gerektiği açık TODO olarak yazıldı.
 - İleride Orchestrator merkezi assignment/queue/state ile crawler'lara disjoint kaynak/domain batch dağıtmalı.
-- CUA guarded scriptlerine benzer şekilde crawler için `scripts/vast_crawler_host_guarded.sh` eklendi.
+- CUA guarded scriptlerine benzer şekilde crawler için `scripts/linux/crawler.sh` eklendi.
 - Genel hedef: önce bir "adam gibi çalışan", korumalı guarded kurulum yolu kanıtlansın; sonra manuel paket/kurulum yolları azaltılıp Docker-first modele geçilsin.
 
 ## 4. Güncel Modül Durumu
@@ -205,7 +205,7 @@ Hızlı bakılacak yerler:
 - `crawler/main.py`: ana crawl mantığı, URL normalizasyonu, task başına state reset.
 - `crawler/services/grpc_client.py`: `Register`, `Heartbeat`, `GetCrawlTask`, `ReportCrawlResult`.
 - `crawler/config.py`: distributed/standalone ayarları.
-- `scripts/vast_crawler_host_guarded.sh`: Vast kurulumu ve korumalı başlatma.
+- `scripts/linux/crawler.sh`: Vast kurulumu ve korumalı başlatma.
 
 Güncel davranış:
 
@@ -234,8 +234,8 @@ Hızlı bakılacak yerler:
 - `cua/main.py`: node modu, active task guard, heartbeat lifecycle.
 - `cua/services/rabbitmq_consumer.py`: `agent_tasks` consume, ack/nack, `agent_results` publish.
 - `cua/test_local.py`: standalone surface test.
-- `scripts/vast_cua_host_guarded.sh`: host üzerinde vLLM + CUA guarded kurulum.
-- `scripts/vast_cua_allinone.sh` ve `cua/Dockerfile.allinone`: Docker all-in-one yol.
+- `scripts/linux/cua.sh`: host üzerinde vLLM + CUA guarded kurulum.
+- `scripts/legacy/vast_cua_allinone.sh` ve `cua/Dockerfile.allinone`: Docker all-in-one yol.
 
 Güncel davranış:
 
@@ -292,7 +292,7 @@ Hızlı bakılacak yerler:
 - `vlm/services/model_handler.py`
 - `vlm/services/rabbitmq_consumer.py`
 - `vlm/services/grpc_client.py`
-- `scripts/vast_vlm_host_guarded.sh`
+- `scripts/linux/vlm.sh`
 
 Riskler:
 
@@ -313,7 +313,7 @@ Hızlı bakılacak yerler:
 - `llm/services/model_handler.py`
 - `llm/services/rabbitmq_consumer.py`
 - `llm/services/grpc_client.py`
-- `scripts/vast_llm_host_guarded.sh`
+- `scripts/linux/llm.sh`
 
 Riskler:
 
@@ -359,19 +359,19 @@ docker-compose.yml
 
 ```powershell
 cd C:\Users\HP\Desktop\Projeler\Bitirme
-.\scripts\orchestrator_host_guarded.ps1
+.\scripts\orchestrator.ps1
 ```
 
 RabbitMQ da compose ile kalksın:
 
 ```powershell
-.\scripts\orchestrator_host_guarded.ps1 -StartRabbitWithCompose
+.\scripts\orchestrator.ps1 -StartRabbitWithCompose
 ```
 
 RabbitMQ + PostgreSQL + MinIO + schema bootstrap:
 
 ```powershell
-.\scripts\orchestrator_host_guarded.ps1 -StartRabbitWithCompose -StartStorageWithCompose -StopExistingOrchestrator
+.\scripts\orchestrator.ps1 -StartRabbitWithCompose -StartStorageWithCompose -StopExistingOrchestrator
 ```
 
 ### Crawler Vast node
@@ -379,19 +379,19 @@ RabbitMQ + PostgreSQL + MinIO + schema bootstrap:
 ```bash
 su - root
 cd ~
-curl -fsSL -o vast_crawler_host_guarded.sh \
-  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_crawler_host_guarded.sh
-chmod +x vast_crawler_host_guarded.sh
+curl -fsSL -o crawler.sh \
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/linux/crawler.sh
+chmod +x crawler.sh
 
 ORCHESTRATOR_HOST=<ORCH_IP> \
 ORCHESTRATOR_PORT=50051 \
-./vast_crawler_host_guarded.sh
+./crawler.sh
 ```
 
 Eski crawler varsa ve bilerek durdurulacaksa:
 
 ```bash
-STOP_EXISTING_CRAWLER=true ./vast_crawler_host_guarded.sh
+STOP_EXISTING_CRAWLER=true ./crawler.sh
 ```
 
 ### CUA standalone Vast node
@@ -401,25 +401,25 @@ Host guarded yol:
 ```bash
 su - root
 cd ~
-curl -fsSL -o vast_cua_host_guarded.sh \
-  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_cua_host_guarded.sh
-chmod +x vast_cua_host_guarded.sh
+curl -fsSL -o cua.sh \
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/linux/cua.sh
+chmod +x cua.sh
 
 CUA_RUN_MODE=standalone \
 CUA_QUERY="Turkey economy 2026" \
-./vast_cua_host_guarded.sh
+./cua.sh
 ```
 
 Vast portal `1234` portunu kullanıyorsa:
 
 ```bash
-VLLM_PORT=1235 CUA_RUN_MODE=standalone ./vast_cua_host_guarded.sh
+VLLM_PORT=1235 CUA_RUN_MODE=standalone ./cua.sh
 ```
 
 Browser görünür gelsin:
 
 ```bash
-CUA_RUN_MODE=standalone BROWSER_HEADLESS=false ./vast_cua_host_guarded.sh
+CUA_RUN_MODE=standalone BROWSER_HEADLESS=false ./cua.sh
 ```
 
 Docker all-in-one yol:
@@ -427,7 +427,7 @@ Docker all-in-one yol:
 ```bash
 cd ~
 curl -fsSL -o vast_cua_allinone.sh \
-  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_cua_allinone.sh
+  https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/legacy/vast_cua_allinone.sh
 chmod +x vast_cua_allinone.sh
 ./vast_cua_allinone.sh
 ```
@@ -438,7 +438,7 @@ chmod +x vast_cua_allinone.sh
 CUA_RUN_MODE=node \
 ORCHESTRATOR_HOST=<ORCH_IP> \
 RABBITMQ_HOST=<ORCH_IP> \
-./vast_cua_host_guarded.sh
+./cua.sh
 ```
 
 Uyarı: RabbitMQ başka makinedeyse `guest/guest` çoğu kurulumda uzaktan çalışmaz. Gerçek kullanıcı/parola veya doğru bridge/VPN gerekir.
@@ -467,15 +467,15 @@ python -m cua.test_local `
 Doğrudan IP erişimi yoksa:
 
 ```powershell
-.\scripts\open_vast_node_bridge.ps1 -VastHost <VAST_HOST> -VastSshPort <PORT>
+.\scripts\helper\windows\open_node_bridge.ps1 -VastHost <VAST_HOST> -VastSshPort <PORT>
 ```
 
 Birden çok node için:
 
 ```powershell
 Copy-Item .\scripts\node_bridges.example.json .\scripts\node_bridges.local.json
-.\scripts\manage_node_bridges.ps1 -Action start
-.\scripts\manage_node_bridges.ps1 -Action status
+.\scripts\helper\windows\bridge.ps1 -Action start
+.\scripts\helper\windows\bridge.ps1 -Action status
 ```
 
 ## 7. Proto ve Contract Kuralları

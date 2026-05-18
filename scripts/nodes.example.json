@@ -1,0 +1,25 @@
+{
+  "mode": "local-core-remote-workers",
+  "defaults": {
+    "sshUser": "root",
+    "sshPort": 22,
+    "targetOs": "auto",
+    "orchestratorHost": "127.0.0.1",
+    "orchestratorPort": 50051,
+    "rabbitmqHost": "127.0.0.1",
+    "rabbitmqPort": 5672,
+    "postgresHost": "127.0.0.1",
+    "postgresPort": 5432,
+    "minioHost": "127.0.0.1",
+    "minioPort": 9000,
+    "reconnectDelaySeconds": 5
+  },
+  "nodes": [
+    { "role": "orchestrator", "run": "local" },
+    { "role": "crawler", "run": "local" },
+    { "role": "cua", "host": "203.0.113.10", "sshPort": 40001 },
+    { "role": "llm", "host": "203.0.113.11", "sshPort": 40002 },
+    { "role": "vlm", "host": "203.0.113.12", "sshPort": 40003 },
+    { "role": "db", "host": "203.0.113.13", "sshPort": 40004, "includeStoragePorts": true }
+  ]
+}

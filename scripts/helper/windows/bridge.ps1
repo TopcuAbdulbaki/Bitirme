@@ -9,10 +9,12 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = Split-Path -Parent $ScriptRoot
+$HelperRoot = Split-Path -Parent $ScriptRoot
+$ScriptsRoot = Split-Path -Parent $HelperRoot
+$RepoRoot = Split-Path -Parent $ScriptsRoot
 $RuntimeRoot = Join-Path $RepoRoot ".runtime\node-bridges"
-$DefaultLocalConfig = Join-Path $ScriptRoot "node_bridges.local.json"
-$DefaultExampleConfig = Join-Path $ScriptRoot "node_bridges.example.json"
+$DefaultLocalConfig = Join-Path $ScriptsRoot "node_bridges.local.json"
+$DefaultExampleConfig = Join-Path $ScriptsRoot "node_bridges.example.json"
 
 function Resolve-ConfigPath {
     param([string]$RequestedPath)

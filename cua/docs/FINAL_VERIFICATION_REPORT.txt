@@ -148,7 +148,7 @@ Created Files (20+):
   ✅ cua/agent/model_handler.py
   ✅ cua/agent/tools.py
   ✅ cua/agent/prompts.py
-  ✅ scripts/6_cua.ps1
+  ✅ scripts/legacy/6_cua.ps1
 
 Documentation Files (5):
   ✅ CUA_IMPLEMENTATION_SUMMARY.md ............. 16.5 KB

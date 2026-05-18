@@ -101,7 +101,7 @@
 #### Phase 5: DevOps (3 files + proto/generated auto-gen)
 ```
 ✅ cua/Dockerfile (multi-stage: browser-base + nvidia/cuda)
-✅ scripts/6_cua.ps1 (PowerShell deployment script, local + SSH)
+✅ scripts/legacy/6_cua.ps1 (PowerShell deployment script, local + SSH)
 ✅ cua/proto/orchestrator.proto (copied by compile_proto.py)
 ✅ cua/generated/orchestrator_pb2.py (auto-generated)
 ✅ cua/generated/orchestrator_pb2_grpc.py (auto-generated)
@@ -215,7 +215,7 @@ docker-compose up --build orchestrator cua
 
 ### Path 3: Vast.ai Remote
 ```powershell
-.\scripts\6_cua.ps1 -RemoteHost <IP> -UseSSH $true
+.\scripts\legacy\6_cua.ps1 -RemoteHost <IP> -UseSSH $true
 # Expected: SSH deployment, CUA running on GPU instance
 ```
 

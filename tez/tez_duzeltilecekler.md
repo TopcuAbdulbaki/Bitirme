@@ -96,10 +96,10 @@ Temel fikir: Orchestrator sabit kontrol düzlemi olur; yeni bir GPU node eklemek
 - `status`, `last_heartbeat`, `provision_log`
 
 **Var olan altyapı (bunların üstüne inşa edilecek):**
-- `scripts/manage_node_bridges.ps1` — SSH reverse tunnel supervisor
+- `scripts/helper/windows/bridge.ps1` — SSH reverse tunnel supervisor
 - `scripts/node_bridges.example.json` — node konfigürasyon şablonu
 - `docs/wireguard_setup.md` — VPN modeli
-- `scripts/vast_cua_host_guarded.sh` — bootstrap mantığının büyük kısmı hazır
+- `scripts/linux/cua.sh` — bootstrap mantığının büyük kısmı hazır
 
 #### Kritik Ayrım
 > Orchestrator **çalışma zamanı** işleri yönetir.

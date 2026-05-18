@@ -5,7 +5,8 @@ param(
     [string]$Node = "all",
     [string]$ProjectRoot = "C:\Users\HP\Desktop\Projeler\Bitirme",
     [int]$RestartDelaySeconds = 5,
-    [switch]$StopExisting
+    [switch]$StopExisting,
+    [switch]$Visible
 )
 
 $ErrorActionPreference = "Stop"
@@ -86,7 +87,8 @@ function Start-SupervisorWindow([string]$NodeName) {
         "-RestartDelaySeconds", "$RestartDelaySeconds"
     )
 
-    $proc = Start-Process -FilePath "pwsh.exe" -ArgumentList $args -WindowStyle Normal -PassThru
+    $windowStyle = if ($Visible) { "Normal" } else { "Hidden" }
+    $proc = Start-Process -FilePath "pwsh.exe" -ArgumentList $args -WindowStyle $windowStyle -PassThru
     Set-Content -LiteralPath (Get-SupervisorPidPath $NodeName) -Value $proc.Id
     Write-Step "$NodeName supervisor visible window started pid=$($proc.Id)"
 }

@@ -201,7 +201,7 @@ Output format matches existing Crawler JSON:
 |------|--------|------------|
 | `cua/Dockerfile` | NEW | Multi-stage: browser-base + nvidia/cuda:12.1 runtime |
 | `docker-compose.yml` | UPDATED | CUA service with GPU reservation, depends_on orchestrator/rabbitmq |
-| `scripts/6_cua.ps1` | NEW | PowerShell deployment script (local + remote SSH modes) |
+| `scripts/legacy/6_cua.ps1` | NEW | PowerShell deployment script (local + remote SSH modes) |
 | `handoff_all.md` | UPDATED | Section 3.6: CUA module documentation |
 | `handoff_files.md` | UPDATED | Section 6: CUA directory structure |
 
@@ -216,10 +216,10 @@ Output format matches existing Crawler JSON:
 **Deployment Options:**
 ```powershell
 # Local
-.\scripts\6_cua.ps1
+.\scripts\legacy\6_cua.ps1
 
 # Remote Vast.ai
-.\scripts\6_cua.ps1 -RemoteHost <IP> -RemoteUser root -UseSSH $true
+.\scripts\legacy\6_cua.ps1 -RemoteHost <IP> -RemoteUser root -UseSSH $true
 
 # Docker Compose
 docker-compose up --build cua
@@ -285,7 +285,7 @@ cua/
 ```
 
 **Deployment Files:**
-- `scripts/6_cua.ps1` (new)
+- `scripts/legacy/6_cua.ps1` (new)
 - `handoff_files.md` (updated)
 
 ---

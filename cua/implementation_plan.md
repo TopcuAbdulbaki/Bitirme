@@ -675,7 +675,7 @@ CMD ["python", "-m", "cua.main"]
 
 ### Sub-Task 5.3: Deployment Script
 
-**Dosya:** `scripts/6_cua.ps1` [YENİ]
+**Dosya:** `scripts/legacy/6_cua.ps1` [YENİ]
 
 Mevcut `5_llm.ps1` pattern'ı izlenerek oluşturulacak. Vast.ai'dan GPU instance seçimi, WireGuard bağlantısı ve Docker run komutlarını içerecek.
 

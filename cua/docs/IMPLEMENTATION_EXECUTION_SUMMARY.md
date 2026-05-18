@@ -245,7 +245,7 @@ python -m cua.main
 docker-compose up --build orchestrator cua
 
 # Vast.ai Deployment
-.\scripts\6_cua.ps1 -RemoteHost <IP> -RemoteUser root -UseSSH $true
+.\scripts\legacy\6_cua.ps1 -RemoteHost <IP> -RemoteUser root -UseSSH $true
 ```
 
 ---

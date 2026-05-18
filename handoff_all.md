@@ -144,10 +144,11 @@ Makineler dünyasındaki en emniyetli iletişim `10.0.0.x` bandında kurulacak W
 📚 **Daha Fazla Detay İçin Okuyunuz:** `docs/wireguard_setup.md`
 
 ### 6.2 Çalıştırma Kodları (Deployment Commands & Automation)
-Kodlar `/scripts` dizini altında Windows `PowerShell` kurgularıyla mevcuttur:
-- **`0_build_all.ps1` & `0_update_all.ps1`:** Yerel kodları Github'a (Private) push yapıp asıl imaj kurucu makine uzağında Docker build yapmayı hedefler, Docker Hub'da paketler (`abdulbakitopcu/vlm:latest` vb).
-- **Modül Spawning:** `1_orchestrator.ps1`'den `5_llm.ps1` e kadar bütün konfigüratörler; Linux hedefindeki bash dosya içeriğine (docker run env komutları vb.) argümanları hazırlar.
-- Vast.ai gibi sunucularda `Dockerfile` üzerinde **NVIDIA Container Toolkit** (`nvidia-ctk`) zorunluluğu eklenmiş biçimde `nvidia-docker` yapılandırılmıştır.
+Kodlar `/scripts` dizini altında guarded host ve bridge akışlarıyla mevcuttur:
+- **Guarded core:** `orchestrator.ps1` ve `orchestrator.sh`, Orchestrator'i readiness kontrolüyle başlatır; gerekirse RabbitMQ/PostgreSQL/MinIO servislerini Compose ile kaldırır.
+- **Guarded worker:** `crawler.sh`, `db.sh`, `vlm.sh`, `llm.sh` ve `cua.sh` Vast/Linux node'larında preflight, venv, proto, bağlantı ve startup doğrulaması yapar.
+- **Bridge:** `scripts/helper/windows/bridge.ps1`, dinamik Vast.ai IP/port oturumları için SSH reverse tunnel supervisor olarak kullanılır.
+- Eski Docker Hub push ve kopyala-yapıştır deploy scriptleri `scripts/legacy/` altına alınmıştır.
 
 📚 **Daha Fazla Detay İçin Okuyunuz:** 
 - `scripts/handoff_scripts.md` (Otomasyon İşlemleri Açıklaması)

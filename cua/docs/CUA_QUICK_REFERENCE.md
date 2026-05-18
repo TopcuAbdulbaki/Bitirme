@@ -84,7 +84,7 @@ docker logs cua-node
 
 ```powershell
 # With SSH to Vast instance
-.\scripts\6_cua.ps1 -RemoteHost <IP> -RemoteUser root -UseSSH $true
+.\scripts\legacy\6_cua.ps1 -RemoteHost <IP> -RemoteUser root -UseSSH $true
 
 # Expected output:
 # [CUA] Building Docker image...
@@ -371,7 +371,7 @@ psql -h localhost -U postgres -d bitirme -c "SELECT source_type, COUNT(*) FROM n
 - **Config:** `cua/config.py`
 - **Agent Core:** `cua/agent/graph.py`
 - **LLM:** `cua/agent/model_handler.py`
-- **Deployment:** `docker-compose.yml`, `scripts/6_cua.ps1`
+- **Deployment:** `docker-compose.yml`, `scripts/legacy/6_cua.ps1`
 
 ### Related Modules
 - **Orchestrator:** `orchestrator/main.py` (task distribution)

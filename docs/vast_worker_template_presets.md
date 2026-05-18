@@ -88,7 +88,7 @@ Ortak docker options cekirdegi:
 Bridge ile calisacaksan bu komutu yerel makinede ac:
 
 ```powershell
-.\scripts\open_vast_node_bridge.ps1 -VastHost <VAST_IP> -VastSshPort <SSH_PORT>
+.\scripts\helper\windows\open_node_bridge.ps1 -VastHost <VAST_IP> -VastSshPort <SSH_PORT>
 ```
 
 Sonra ilgili Vast node icinde `ORCHESTRATOR_HOST=127.0.0.1` ve gerekiyorsa `RABBITMQ_HOST=127.0.0.1`, `POSTGRES_HOST=127.0.0.1`, `MINIO_HOST=127.0.0.1` kullan.
@@ -119,9 +119,9 @@ Node baslatma:
 ```bash
 su - root
 cd ~
-curl -fsSL -o vast_crawler_host_guarded.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_crawler_host_guarded.sh
-chmod +x vast_crawler_host_guarded.sh
-ORCHESTRATOR_HOST=127.0.0.1 ORCHESTRATOR_PORT=15051 ./vast_crawler_host_guarded.sh
+curl -fsSL -o crawler.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/linux/crawler.sh
+chmod +x crawler.sh
+ORCHESTRATOR_HOST=127.0.0.1 ORCHESTRATOR_PORT=15051 ./crawler.sh
 ```
 
 ## 2. DB Worker
@@ -152,13 +152,13 @@ Node baslatma:
 ```bash
 su - root
 cd ~
-curl -fsSL -o vast_db_host_guarded.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_db_host_guarded.sh
-chmod +x vast_db_host_guarded.sh
+curl -fsSL -o db.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/linux/db.sh
+chmod +x db.sh
 ORCHESTRATOR_HOST=127.0.0.1 ORCHESTRATOR_PORT=15051 \
 RABBITMQ_HOST=127.0.0.1 RABBITMQ_PORT=15670 \
 POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=15432 \
 MINIO_HOST=127.0.0.1 MINIO_PORT=19000 \
-./vast_db_host_guarded.sh
+./db.sh
 ```
 
 ## 3. VLM Worker
@@ -187,12 +187,12 @@ Node baslatma:
 ```bash
 su - root
 cd ~
-curl -fsSL -o vast_vlm_host_guarded.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_vlm_host_guarded.sh
-chmod +x vast_vlm_host_guarded.sh
+curl -fsSL -o vlm.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/linux/vlm.sh
+chmod +x vlm.sh
 ORCHESTRATOR_HOST=127.0.0.1 ORCHESTRATOR_PORT=15051 \
 RABBITMQ_HOST=127.0.0.1 RABBITMQ_PORT=15670 \
 MINIO_HOST=127.0.0.1 MINIO_PORT=19000 \
-./vast_vlm_host_guarded.sh
+./vlm.sh
 ```
 
 ## 4. LLM Worker
@@ -221,11 +221,11 @@ Node baslatma:
 ```bash
 su - root
 cd ~
-curl -fsSL -o vast_llm_host_guarded.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_llm_host_guarded.sh
-chmod +x vast_llm_host_guarded.sh
+curl -fsSL -o llm.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/linux/llm.sh
+chmod +x llm.sh
 ORCHESTRATOR_HOST=127.0.0.1 ORCHESTRATOR_PORT=15051 \
 RABBITMQ_HOST=127.0.0.1 RABBITMQ_PORT=15670 \
-./vast_llm_host_guarded.sh
+./llm.sh
 ```
 
 ## 5. CUA Worker (Distributed Node)
@@ -237,7 +237,7 @@ RABBITMQ_HOST=127.0.0.1 RABBITMQ_PORT=15670 \
 - Disk: `100 GB`
 - Extra Filters: `compute_cap>=700 cuda_max_good>=12.8 gpu_display_active=false`
 
-Bu node `vast_cua_host_guarded.sh` ile yerel vLLM de acacagi icin `1234` portunu debug amacli acmak mantiklidir. Browser'in gorunur olmasi istenirse ayni env/options ile sadece image `vastai/linux-desktop:cuda-12.9-ubuntu24.04-2026-02-05` yapilabilir ve `BROWSER_HEADLESS=false` verilebilir.
+Bu node `cua.sh` ile yerel vLLM de acacagi icin `1234` portunu debug amacli acmak mantiklidir. Browser'in gorunur olmasi istenirse ayni env/options ile sadece image `vastai/linux-desktop:cuda-12.9-ubuntu24.04-2026-02-05` yapilabilir ve `BROWSER_HEADLESS=false` verilebilir.
 
 `PORTAL_CONFIG`:
 
@@ -256,12 +256,12 @@ Node baslatma:
 ```bash
 su - root
 cd ~
-curl -fsSL -o vast_cua_host_guarded.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_cua_host_guarded.sh
-chmod +x vast_cua_host_guarded.sh
+curl -fsSL -o cua.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/linux/cua.sh
+chmod +x cua.sh
 CUA_RUN_MODE=node \
 ORCHESTRATOR_HOST=127.0.0.1 ORCHESTRATOR_PORT=15051 \
 RABBITMQ_HOST=127.0.0.1 RABBITMQ_PORT=15670 \
-./vast_cua_host_guarded.sh
+./cua.sh
 ```
 
 ## 6. CUA Worker (Standalone Test)
@@ -291,9 +291,9 @@ Node baslatma:
 
 ```bash
 cd ~
-curl -fsSL -o vast_cua_standalone.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/vast_cua_standalone.sh
-chmod +x vast_cua_standalone.sh
-REPO_URL='https://github.com/TopcuAbdulbaki/Bitirme.git' ./vast_cua_standalone.sh
+curl -fsSL -o cua.sh https://raw.githubusercontent.com/TopcuAbdulbaki/Bitirme/master/scripts/linux/cua.sh
+chmod +x cua.sh
+REPO_URL='https://github.com/TopcuAbdulbaki/Bitirme.git' ./cua.sh
 ```
 
 ## Notlar

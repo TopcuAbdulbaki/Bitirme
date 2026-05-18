@@ -281,7 +281,7 @@ ensure_vllm_port_free() {
   listeners="$(port_listener_pids "$VLLM_PORT" || true)"
   if [ -n "$listeners" ]; then
     printf '\n[FAIL] Port %s is already in use:\n%s\n' "$VLLM_PORT" "$listeners" >&2
-    die "Set VLLM_PORT to a free port, for example: VLLM_PORT=1235 ./vast_cua_host_guarded.sh"
+    die "Set VLLM_PORT to a free port, for example: VLLM_PORT=1235 ./scripts/linux/cua.sh --local"
   fi
 }
 
@@ -315,7 +315,7 @@ ensure_vllm_port_available_or_reusable() {
   fi
 
   printf '\n[FAIL] Port %s is already in use by a non-matching process:\n%s\n' "$VLLM_PORT" "$listeners" >&2
-  die "Set VLLM_PORT to a free port, for example: VLLM_PORT=1236 ./vast_cua_host_guarded.sh"
+  die "Set VLLM_PORT to a free port, for example: VLLM_PORT=1236 ./scripts/linux/cua.sh --local"
 }
 
 preflight_gpu() {
